@@ -455,11 +455,11 @@ async def send_song(m, query, msg, quality="320"):
             except Exception as e2:
                 await msg.edit(
                     f"⚠️ **Group mein audio send nahi ho sakta!**\n\n"
-                    f"**Fix karo:**\n"
-                    f"1. Bot ko **Admin** banao\n"
-                    f"2. Ya **Media** permission do\n\n"
+                    f"**To fix:**\n"
+                    f"1. Make the bot an **Admin**\n"
+                    f"2. Or grant **Media** permission\n\n"
                     f"🎵 Song: `{title}`\n"
-                    f"📩 Pehle mujhe PM karo: {BOT_USERNAME}"
+                    f"📩 Start a PM first: {BOT_USERNAME}"
                 )
         else:
             await msg.edit(f"❌ Error: `{err_str[:80]}`")
@@ -490,6 +490,21 @@ async def send_song(m, query, msg, quality="320"):
         await m.reply(xp_msg)
     elif not is_group:
         await m.reply(f"✨ +{xp_earned} XP{streak_bonus} | {get_xp_bar(total_xp)} Lv.{new_level}")
+
+    # Auto-suggest similar songs
+    try:
+        if song_data:
+            artist_s = song_data.get("primaryArtists", song_data.get("artist", "")).split(",")[0].strip()
+            song_s = song_data.get("name", query)
+            similar = await asyncio.to_thread(apis.get_similar_tracks, artist_s, song_s)
+            if similar and len(similar) >= 2:
+                suggest_text = "💡 **You may also like:**\n"
+                for t in similar[:3]:
+                    suggest_text += f"• {t['name']} — {t['artist']}\n"
+                suggest_text += f"\n`/download [song name]`"
+                await m.reply(suggest_text)
+    except:
+        pass
 
     try: os.remove(path)
     except: pass
@@ -955,11 +970,21 @@ async def srec(_, m: Message):
                         seen.add(s["name"])
                         unique.append(s)
                 text = "🎯 **Top Picks for You:**\n\n"
-            for i, s in enumerate(unique[:8], 1):
+            for i, s in enumerate(unique[:6], 1):
                 artist = s.get("primaryArtists", s.get("artist", "Unknown"))
                 text += f"{i}. **{s['name']}** — {artist}\n"
-            text += "\n📥 `/download [song name]`\n💡 Tip: `/srec Tum Hi Ho` for similar songs"
-            await msg.edit(text)
+            text += "\n👇 Tap to download:"
+            num_emojis = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣"]
+            btn_rows = []
+            row = []
+            for i, s in enumerate(unique[:6]):
+                row.append(InlineKeyboardButton(num_emojis[i], callback_data=f"dl_{s['name'][:30]}"))
+                if len(row) == 3:
+                    btn_rows.append(row)
+                    row = []
+            if row:
+                btn_rows.append(row)
+            await msg.edit(text, reply_markup=InlineKeyboardMarkup(btn_rows))
         except Exception as e:
             await msg.edit("❌ Could not fetch! Try again.")
         return
@@ -991,8 +1016,20 @@ async def srec(_, m: Message):
             for i, s in enumerate(unique[:8], 1):
                 artist = s.get("primaryArtists", s.get("artist", "Unknown"))
                 text += f"{i}. **{s['name']}** — {artist}\n"
-        text += "\n📥 `/download [song name]`"
-        await msg.edit(text)
+        text += "\n👇 Tap to download:"
+        num_emojis = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣"]
+        btn_rows2 = []
+        row2 = []
+        result_list = similar_tracks[:6] if similar_tracks and len(similar_tracks) >= 3 else unique[:6]
+        for i, t in enumerate(result_list):
+            name = t.get("name", "") if isinstance(t, dict) else t
+            row2.append(InlineKeyboardButton(num_emojis[i], callback_data=f"dl_{name[:30]}"))
+            if len(row2) == 3:
+                btn_rows2.append(row2)
+                row2 = []
+        if row2:
+            btn_rows2.append(row2)
+        await msg.edit(text, reply_markup=InlineKeyboardMarkup(btn_rows2) if btn_rows2 else None)
     except Exception as e:
         await msg.edit("❌ Could not fetch! Try again.")
 
@@ -1204,7 +1241,7 @@ async def chat_cmd(_, m: Message):
 async def clearchat(_, m: Message):
     user_id = m.from_user.id
     chat_histories.pop(user_id, None)
-    await m.reply("🗑 **Chat history clear ho gayi!**\nFresh start karo `/chat` se!")
+    await m.reply("🗑 **Chat history cleared!**\nStart fresh with `/chat`!")
 
 
 @app.on_message(filters.command("challenge"))
@@ -1282,7 +1319,7 @@ async def daily(_, m: Message):
 @app.on_message(filters.command("dailygroup"))
 async def dailygroup(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     current = db.get_group_setting(m.chat.id, "daily_song")
     new_val = 0 if current else 1
@@ -1460,7 +1497,7 @@ async def genrestats(_, m: Message):
 @app.on_message(filters.command("gleaderboard"))
 async def gleaderboard(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     rows = db.get_group_leaderboard(m.chat.id)
     if not rows:
@@ -1476,7 +1513,7 @@ async def gleaderboard(_, m: Message):
 @app.on_message(filters.command("groupmood"))
 async def groupmood(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     moods = ["happy 😊", "sad 😢", "party 🎉", "romantic 💕", "chill 😌"]
     keyboard = InlineKeyboardMarkup([
@@ -1492,7 +1529,7 @@ async def groupmood(_, m: Message):
 @app.on_message(filters.command("groupquiz"))
 async def groupquiz(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     msg = await m.reply("🎮 **Group Quiz shuru ho raha hai...**")
     chat_id = m.chat.id
@@ -1578,7 +1615,7 @@ async def groupquiz(_, m: Message):
 @app.on_message(filters.command("groupstats"))
 async def groupstats(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     group_id = m.chat.id
     total = db.get_group_total_downloads(group_id)
@@ -1817,8 +1854,20 @@ async def mood(_, m: Message):
         for i, s in enumerate(unique[:8], 1):
             artist = s.get("primaryArtists", s.get("artist", "Unknown"))
             text += f"{i}. **{s['name']}** — {artist}\n"
-        text += "\n📥 `/download [song name]`"
-        await msg.edit(text)
+        text += "\n👇 Tap to download:"
+        num_emojis = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣"]
+        btn_rows2 = []
+        row2 = []
+        result_list = similar_tracks[:6] if similar_tracks and len(similar_tracks) >= 3 else unique[:6]
+        for i, t in enumerate(result_list):
+            name = t.get("name", "") if isinstance(t, dict) else t
+            row2.append(InlineKeyboardButton(num_emojis[i], callback_data=f"dl_{name[:30]}"))
+            if len(row2) == 3:
+                btn_rows2.append(row2)
+                row2 = []
+        if row2:
+            btn_rows2.append(row2)
+        await msg.edit(text, reply_markup=InlineKeyboardMarkup(btn_rows2) if btn_rows2 else None)
     except Exception as e:
         await msg.edit("❌ Could not fetch! Try again.")
         print(f"[mood] {e}")
@@ -2007,8 +2056,20 @@ async def newreleases(_, m: Message):
         for i, s in enumerate(unique[:10], 1):
             artist = s.get("primaryArtists", s.get("artist", "Unknown"))
             text += f"{i}. **{s['name']}** — {artist}\n"
-        text += "\n📥 `/download [song name]`"
-        await msg.edit(text)
+        text += "\n👇 Tap to download:"
+        num_emojis = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣"]
+        btn_rows2 = []
+        row2 = []
+        result_list = similar_tracks[:6] if similar_tracks and len(similar_tracks) >= 3 else unique[:6]
+        for i, t in enumerate(result_list):
+            name = t.get("name", "") if isinstance(t, dict) else t
+            row2.append(InlineKeyboardButton(num_emojis[i], callback_data=f"dl_{name[:30]}"))
+            if len(row2) == 3:
+                btn_rows2.append(row2)
+                row2 = []
+        if row2:
+            btn_rows2.append(row2)
+        await msg.edit(text, reply_markup=InlineKeyboardMarkup(btn_rows2) if btn_rows2 else None)
     except Exception as e:
         await msg.edit("❌ Could not fetch! Try again.")
         print(f"[newreleases] {e}")
@@ -2177,7 +2238,7 @@ async def removefav(_, m: Message):
 @app.on_message(filters.command("requestsong"))
 async def requestsong(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     parts = m.text.split(None, 1)
     if len(parts) < 2 or not parts[1].strip():
@@ -2215,28 +2276,26 @@ async def search(_, m: Message):
         return
     query = parts[1].strip()
     msg = await m.reply(f"🔍 **Searching:** `{query}`...")
-    results = search_jiosaavn_multiple(query, 5)
+    results = await asyncio.to_thread(search_jiosaavn_multiple, query, 6)
     if not results:
         await msg.edit("❌ No results found!")
         return
-    text = f"🔍 **Results for:** `{query}`\n\n"
-    for i, song in enumerate(results, 1):
+    text = f"🎵 **Search Results:**\n\n"
+    for i, song in enumerate(results[:6], 1):
         d = int(song["duration"])
-        keyboard_row = [
-            InlineKeyboardButton("📥", callback_data=f"dl_{song['name'][:30]}"),
-            InlineKeyboardButton("🎤", callback_data=f"lyr_{song['name'][:35]}"),
-            InlineKeyboardButton("🎵", callback_data=f"sim_{song['name'][:40]}"),
-        ]
         text += f"{i}. **{song['name']}** — {song['primaryArtists']} | ⏱ {d//60}:{d%60:02d}\n"
-    text += "\n📥 Tap buttons below or `/download [name]`"
-    # Inline buttons for top result
-    top = results[0]
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📥 Download", callback_data=f"dl_{top['name'][:30]}"),
-        InlineKeyboardButton("📝 Lyrics", callback_data=f"lyr_{top['name'][:35]}"),
-        InlineKeyboardButton("🎵 Similar", callback_data=f"sim_{top['name'][:40]}"),
-        InlineKeyboardButton("▶️ Preview", callback_data=f"none"),
-    ]])
+    text += "\n👇 Tap to download:"
+    num_emojis = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣"]
+    btn_rows = []
+    row = []
+    for i, song in enumerate(results[:6]):
+        row.append(InlineKeyboardButton(num_emojis[i], callback_data=f"dl_{song['name'][:30]}"))
+        if len(row) == 3:
+            btn_rows.append(row)
+            row = []
+    if row:
+        btn_rows.append(row)
+    keyboard = InlineKeyboardMarkup(btn_rows)
     await msg.edit(text, reply_markup=keyboard)
 
 @app.on_message(filters.command("secret"))
@@ -2257,16 +2316,16 @@ async def secret(_, m: Message):
 async def skip(_, m: Message):
     chat_id = m.chat.id
     if chat_id not in active_quiz:
-        await m.reply("❌ No active quiz!")
+        await m.reply("❌ No active quiz running!")
         return
     quiz = active_quiz.pop(chat_id)
-    await m.reply(f"⏭ **Skipped!**\nAnswer: **{quiz['title']}** by {quiz['artist']}")
+    await m.reply(f"⏭ **Skipped!**\nThe answer was: **{quiz['title']}** by {quiz['artist']}")
 
 
 @app.on_message(filters.command("songbattle"))
 async def songbattle(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     parts = m.text.split(None, 1)
     if len(parts) < 2 or "|" not in parts[1]:
@@ -2458,7 +2517,7 @@ async def topsongs(_, m: Message):
 @app.on_message(filters.command("topuser"))
 async def topuser(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     top = db.get_group_leaderboard(m.chat.id, 1)
     if not top:
@@ -2605,7 +2664,7 @@ async def vibe(_, m: Message):
 @app.on_message(filters.command("votesong"))
 async def votesong(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     msg = await m.reply("📊 **Creating Song Vote...**")
     results = search_jiosaavn_multiple("popular hindi songs", 10)
@@ -3036,7 +3095,7 @@ async def passbomb_cmd(_, m: Message):
 @app.on_message(filters.command("duel"))
 async def duel_cmd(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
-        await m.reply("❌ Group mein use karo!")
+        await m.reply("❌ Use this in a group!")
         return
     chat_id = m.chat.id
     if chat_id in active_duel:
@@ -3153,40 +3212,100 @@ WORDLE_WORDS = [
     "LAUGH", "TEARS", "BLOOM", "SPARK", "BLAZE", "RIVER", "OCEAN",
     "VIVID", "LUNAR", "SOLAR", "PRISM", "BRISK", "CRISP", "SWIRL",
     "GLIDE", "FROST", "FLICK", "DRIFT", "CREST", "CLOUD", "PLAIN",
-    "STEEP", "GRIND", "BLEND", "FLARE", "GRAFT", "TROVE", "CHUNK",
+    "STEEP", "GRIND", "BLEND", "FLARE", "FLAIR", "GRAZE", "PLUCK",
+    "SIREN", "BLISS", "FORTE", "SCOUT", "WALTZ", "EPOCH", "RIVET",
+]
+
+WORDLE_FUN_LINES = [
+    "Lucky guess? Or pure skill? 😏",
+    "Getting warmer... or colder? 👀",
+    "You're on fire today! 🔥",
+    "That was a bold move! 😤",
+    "Big brain energy right there 🧠",
+    "Not bad, not bad at all 😎",
+    "Is this your final answer? 🤔",
+    "The word is watching you 👁",
+    "Almost there... or are you? 😈",
+    "Legend behavior detected 👑",
+    "Trust the process! 💪",
+    "One step closer to glory ⚡",
 ]
 
 def _get_wordle_hint(word, attempts):
-    """Generate hint revealing one unrevealed letter"""
     guessed_letters = set()
     for attempt in attempts:
-        for ch in attempt.split()[-1] if attempt.split() else "":
-            guessed_letters.add(ch)
+        parts = attempt.split()
+        if len(parts) > 1:
+            for ch in parts[-1]:
+                guessed_letters.add(ch)
     unrevealed = [i for i, ch in enumerate(word) if ch not in guessed_letters]
     if not unrevealed:
-        # All letters guessed somehow, reveal position
-        return f"💡 Hint: Letter at position {1} is **{word[0]}**"
+        return "💡 Hint: Position 1 is **" + word[0] + "**"
     pos = random.choice(unrevealed)
-    return f"💡 Hint: Letter at position {pos+1} is **{word[pos]}**"
+    return "💡 Hint: Position " + str(pos+1) + " is **" + word[pos] + "**"
 
 @app.on_message(filters.command("wordle"))
 async def wordle_cmd(_, m: Message):
     user_id = m.from_user.id
-    # Always start new game (force new word each time)
     if user_id in active_wordle:
         del active_wordle[user_id]
     word = random.choice(WORDLE_WORDS)
     active_wordle[user_id] = {"word": word, "attempts": []}
+    stats = db.get_wordle_stats(user_id)
+    streak = stats.get("streak", 0)
+    streak_text = ""
+    if streak > 0:
+        streak_text = "\n🔥 Your streak: **" + str(streak) + "** days"
     await m.reply(
-        f"🟩 **WORDLE!**\n\n"
-        f"Guess the 5-letter word!\n\n"
-        f"🟩 = Right letter, right spot\n"
-        f"🟨 = Right letter, wrong spot\n"
-        f"⬜ = Letter not in word\n\n"
-        f"You have **20 attempts**!\n"
-        f"💡 Hints appear at attempt 11 and 18\n\n"
-        f"Use `/g WORD` to guess — e.g. `/g MUSIC`"
+        "🟩 **WORDLE!**\n\n"
+        "Guess the 5-letter word!\n\n"
+        "🟩 = Right letter, right spot\n"
+        "🟨 = Right letter, wrong spot\n"
+        "⬜ = Letter not in word\n\n"
+        "**20 attempts** | Hints at attempt 11 & 18" + streak_text + "\n\n"
+        "Use `/g WORD` — e.g. `/g MUSIC`"
     )
+
+@app.on_message(filters.command("dwordle"))
+async def dwordle_cmd(_, m: Message):
+    word = db.get_or_create_daily_wordle(WORDLE_WORDS)
+    user_id = m.from_user.id
+    if user_id in active_wordle and active_wordle[user_id].get("daily"):
+        w = active_wordle[user_id]
+        prev = "\n".join(w["attempts"]) if w["attempts"] else "No guesses yet"
+        att = len(w["attempts"])
+        await m.reply(
+            "📅 **Daily Wordle** — game already active!\n\n" +
+            prev + "\n\nAttempts: **" + str(att) + "/20**\n"
+            "Use `/g WORD` to guess"
+        )
+        return
+    active_wordle[user_id] = {"word": word, "attempts": [], "daily": True}
+    import datetime as _dt
+    today_str = _dt.date.today().strftime("%B %d")
+    await m.reply(
+        "📅 **Daily Wordle — " + today_str + "**\n\n"
+        "Same word for everyone today! Compete with friends 🏆\n\n"
+        "🟩 = Right letter, right spot\n"
+        "🟨 = Right letter, wrong spot\n"
+        "⬜ = Letter not in word\n\n"
+        "**20 attempts** | Use `/g WORD` to guess"
+    )
+
+@app.on_message(filters.command("lwordle"))
+async def lwordle_cmd(_, m: Message):
+    rows = db.get_wordle_leaderboard(10)
+    if not rows:
+        await m.reply("🏆 **Wordle Leaderboard**\n\nNo wins yet! Play with `/wordle`")
+        return
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    text = "🏆 **Wordle Leaderboard**\n\n"
+    for i, row in enumerate(rows):
+        medal = medals[i] if i < len(medals) else str(i+1) + "."
+        s = row.get("streak", 0)
+        streak_part = " | 🔥" + str(s) if s > 1 else ""
+        text += medal + " **" + str(row["name"]) + "** — " + str(row["wins"]) + " wins" + streak_part + "\n"
+    await m.reply(text)
 
 @app.on_message(filters.command("g"))
 async def wordle_guess(_, m: Message):
@@ -3196,16 +3315,18 @@ async def wordle_guess(_, m: Message):
         if user_id in active_wordle:
             w = active_wordle[user_id]
             prev = "\n".join(w["attempts"]) if w["attempts"] else "No guesses yet"
-            await m.reply(f"🟩 **Active Wordle:**\n\n{prev}\n\nAttempts: **{len(w['attempts'])}/20**\n`/g WORD` to guess")
+            att = len(w["attempts"])
+            dtype = "Daily " if w.get("daily") else ""
+            await m.reply("🟩 **" + dtype + "Wordle Active:**\n\n" + prev + "\n\nAttempts: **" + str(att) + "/20**\n`/g WORD` to guess")
         else:
-            await m.reply("❌ No active game! Start with `/wordle`")
+            await m.reply("❌ No active game! Use `/wordle` or `/dwordle`")
         return
     if user_id not in active_wordle:
-        await m.reply("❌ Start game first with `/wordle`!")
+        await m.reply("❌ Start a game first! Use `/wordle` or `/dwordle`")
         return
     guess = parts[1].strip().upper()
     if len(guess) != 5 or not guess.isalpha():
-        await m.reply("❌ Must be a 5-letter word! e.g. `/g MUSIC`")
+        await m.reply("❌ Must be a 5-letter English word! e.g. `/g MUSIC`")
         return
     w = active_wordle[user_id]
     word = w["word"]
@@ -3217,15 +3338,18 @@ async def wordle_guess(_, m: Message):
             result += "🟨"
         else:
             result += "⬜"
-    attempt_line = f"{result} {guess}"
+    attempt_line = result + " " + guess
     w["attempts"].append(attempt_line)
     active_wordle[user_id] = w
     attempts_used = len(w["attempts"])
     prev = "\n".join(w["attempts"])
+    fun_line = random.choice(WORDLE_FUN_LINES)
 
     if guess == word:
         del active_wordle[user_id]
         db.ensure_user(user_id, m.from_user.first_name)
+        db.record_wordle_win(user_id, m.from_user.first_name)
+        stats = db.get_wordle_stats(user_id)
         if attempts_used <= 5:
             xp = 30
         elif attempts_used <= 10:
@@ -3233,33 +3357,32 @@ async def wordle_guess(_, m: Message):
         else:
             xp = 15
         db.add_xp(user_id, xp)
+        streak_val = stats.get("streak", 1)
+        streak_line = "\n🔥 Streak: **" + str(streak_val) + " days**!" if streak_val > 1 else ""
         await m.reply(
-            f"🎉 **Correct! {m.from_user.first_name}!**\n\n"
-            f"{prev}\n\n"
-            f"🟩 Word: **{word}**\n"
-            f"Attempts: **{attempts_used}/20** | ✨ +{xp} XP!\n\n"
-            f"Play again: `/wordle`"
+            "🎉 **Correct, " + m.from_user.first_name + "!**\n\n" +
+            prev + "\n\n" +
+            "🟩 Word: **" + word + "**\n" +
+            "Attempts: **" + str(attempts_used) + "/20** | ✨ +" + str(xp) + " XP" + streak_line + "\n\n" +
+            "Play again: `/wordle` | Leaderboard: `/lwordle`"
         )
     elif attempts_used >= 20:
         del active_wordle[user_id]
         await m.reply(
-            f"💀 **Game Over!**\n\n"
-            f"{prev}\n\n"
-            f"🔤 Word was: **{word}**\n"
-            f"Try again: `/wordle`"
+            "💀 **Game Over!**\n\n" +
+            prev + "\n\n" +
+            "🔤 Word was: **" + word + "**\n" +
+            "Try again: `/wordle`"
         )
     else:
         hint_text = ""
-        if attempts_used == 11:
-            hint_text = "\n\n" + _get_wordle_hint(word, w["attempts"])
-        elif attempts_used == 18:
+        if attempts_used == 11 or attempts_used == 18:
             hint_text = "\n\n" + _get_wordle_hint(word, w["attempts"])
         await m.reply(
-            f"{prev}\n\n"
-            f"Attempts: **{attempts_used}/20**{hint_text}\n"
-            f"`/g WORD` — Next guess!"
+            prev + "\n\n" +
+            "Attempts: **" + str(attempts_used) + "/20** | " + fun_line + hint_text + "\n" +
+            "`/g WORD` — Next guess!"
         )
-
 
 # ===== PAGINATED MENU SYSTEM =====
 
@@ -3301,6 +3424,12 @@ MENU_PAGES = {
             ("👥 /groupquiz", "Group quiz"), ("⚔️ /songbattle", "Song battle"),
             ("📊 /votesong", "Vote song"), ("⭐ /rate", "Rate song"),
             ("🏆 /topsongs", "Top rated"),
+        ],
+    ],
+    "wordle": [
+        [
+            ("🟩 /wordle", "New Wordle game"), ("📅 /dwordle", "Daily Wordle"),
+            ("🏆 /lwordle", "Wordle leaderboard"),
         ],
     ],
     "fun": [
