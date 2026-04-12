@@ -461,7 +461,32 @@ async def send_song(m, query, msg, quality="320"):
                     f"📩 Pehle mujhe PM karo: {BOT_USERNAME}"
                 )
         else:
-            await msg.edit(f"❌ Error: `{err_str[:80]}`")
+            if "SLOWMODE_WAIT" in err_str:
+                import re
+                wait = re.search(r'\d+', err_str)
+                secs_wait = int(wait.group()) if wait else 10
+                try:
+                    await msg.edit(f"⏳ Slowmode hai! {secs_wait} sec mein retry karunga...")
+                except: pass
+                await asyncio.sleep(secs_wait)
+                try:
+                    await app.send_audio(
+                        m.chat.id, path,
+                        caption=(f"🎵 **{title}**\n"
+                                 f"💿 {album} | 📅 {year}\n"
+                                 f"⏱ {mins}:{secs:02d} | 🎧 {quality}kbps\n"
+                                 f"👤 {m.from_user.first_name}\n"
+                                 f"━━━━━━━━━━━━━━━\n"
+                                 f"🎧 Powered by BeatNova"),
+                        title=song_name,
+                        performer=artist_name,
+                        duration=duration,
+                        reply_markup=reaction_keyboard
+                    )
+                except Exception as e3:
+                    await msg.edit(f"❌ Retry bhi fail hua: `{str(e3)[:80]}`")
+            else:
+                await msg.edit(f"❌ Error: `{err_str[:80]}`")
         try: os.remove(path)
         except: pass
         return
