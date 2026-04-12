@@ -24,6 +24,8 @@ active_guess = {}  # {chat_id: {"number": int, "attempts": int}}
 active_wordle = {} # {user_id: {"word": str, "attempts": list}}
 today_downloads = {"count": 0, "date": datetime.date.today()}
 chat_histories = {}  # {user_id: [{"role": "user/assistant", "content": "..."}]}
+chat_daily_count = {}  # {user_id: {"count": int, "date": date}}
+CHAT_DAILY_LIMIT = 15
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -1147,12 +1149,21 @@ async def chat_cmd(_, m: Message):
         return
     user_id = m.from_user.id
     user_msg = parts[1].strip()
+    # Daily limit check
+    today = datetime.date.today()
+    if user_id not in chat_daily_count or chat_daily_count[user_id]["date"] != today:
+        chat_daily_count[user_id] = {"count": 0, "date": today}
+    if chat_daily_count[user_id]["count"] >= CHAT_DAILY_LIMIT:
+        await m.reply(f"⚠️ Daily chat limit reached ({CHAT_DAILY_LIMIT}/day)!\nCome back tomorrow 🕛")
+        return
+    chat_daily_count[user_id]["count"] += 1
+    remaining = CHAT_DAILY_LIMIT - chat_daily_count[user_id]["count"]
     # Init history
     if user_id not in chat_histories:
         chat_histories[user_id] = []
     # Add user message
     chat_histories[user_id].append({"role": "user", "content": user_msg})
-    # Keep last 10 messages only
+    # Keep last 20 messages only
     if len(chat_histories[user_id]) > 20:
         chat_histories[user_id] = chat_histories[user_id][-20:]
     msg = await m.reply("💬 **Thinking...**")
@@ -1179,7 +1190,7 @@ async def chat_cmd(_, m: Message):
         if "choices" in data:
             reply_text = data["choices"][0]["message"]["content"].strip()
             chat_histories[user_id].append({"role": "assistant", "content": reply_text})
-            await msg.edit(f"💬 {reply_text}")
+            await msg.edit(f"💬 {reply_text}\n\n`{remaining} chats left today`")
         else:
             # Log actual error
             err = data.get("error", {}).get("message", str(data))
@@ -1647,8 +1658,9 @@ async def help_cmd(_, m: Message):
          InlineKeyboardButton("🌍 Discover", callback_data="menu_discover_1")],
         [InlineKeyboardButton("🎮 Games", callback_data="menu_games_1"),
          InlineKeyboardButton("🕹 Fun Games", callback_data="menu_fun_1")],
-        [InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1"),
-         InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
+        [InlineKeyboardButton("💬 Chat & More", callback_data="menu_chat_1"),
+         InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1")],
+        [InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
     ])
     await m.reply(
         "🎧 **BeatNova Help Menu**\n\n"
@@ -2315,8 +2327,9 @@ async def start(_, m: Message):
          InlineKeyboardButton("🌍 Discover", callback_data="menu_discover_1")],
         [InlineKeyboardButton("🎮 Games", callback_data="menu_games_1"),
          InlineKeyboardButton("🕹 Fun Games", callback_data="menu_fun_1")],
-        [InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1"),
-         InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
+        [InlineKeyboardButton("💬 Chat & More", callback_data="menu_chat_1"),
+         InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1")],
+        [InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
     ])
     await m.reply(
         f"🎧 **Welcome to BeatNova!**\n\n"
@@ -3138,48 +3151,64 @@ WORDLE_WORDS = [
     "MANIA", "DREAM", "HEART", "FLAME", "NIGHT", "LIGHT", "SHINE",
     "STORM", "GHOST", "BRAVE", "GRACE", "POWER", "MAGIC", "SMILE",
     "LAUGH", "TEARS", "BLOOM", "SPARK", "BLAZE", "RIVER", "OCEAN",
+    "VIVID", "LUNAR", "SOLAR", "PRISM", "BRISK", "CRISP", "SWIRL",
+    "GLIDE", "FROST", "FLICK", "DRIFT", "CREST", "CLOUD", "PLAIN",
+    "STEEP", "GRIND", "BLEND", "FLARE", "GRAFT", "TROVE", "CHUNK",
 ]
+
+def _get_wordle_hint(word, attempts):
+    """Generate hint revealing one unrevealed letter"""
+    guessed_letters = set()
+    for attempt in attempts:
+        for ch in attempt.split()[-1] if attempt.split() else "":
+            guessed_letters.add(ch)
+    unrevealed = [i for i, ch in enumerate(word) if ch not in guessed_letters]
+    if not unrevealed:
+        # All letters guessed somehow, reveal position
+        return f"💡 Hint: Letter at position {1} is **{word[0]}**"
+    pos = random.choice(unrevealed)
+    return f"💡 Hint: Letter at position {pos+1} is **{word[pos]}**"
 
 @app.on_message(filters.command("wordle"))
 async def wordle_cmd(_, m: Message):
     user_id = m.from_user.id
+    # Always start new game (force new word each time)
+    if user_id in active_wordle:
+        del active_wordle[user_id]
+    word = random.choice(WORDLE_WORDS)
+    active_wordle[user_id] = {"word": word, "attempts": []}
+    await m.reply(
+        f"🟩 **WORDLE!**\n\n"
+        f"Guess the 5-letter word!\n\n"
+        f"🟩 = Right letter, right spot\n"
+        f"🟨 = Right letter, wrong spot\n"
+        f"⬜ = Letter not in word\n\n"
+        f"You have **20 attempts**!\n"
+        f"💡 Hints appear at attempt 11 and 18\n\n"
+        f"Use `/g WORD` to guess — e.g. `/g MUSIC`"
+    )
+
+@app.on_message(filters.command("g"))
+async def wordle_guess(_, m: Message):
+    user_id = m.from_user.id
     parts = m.text.split(None, 1)
     if len(parts) < 2 or not parts[1].strip():
-        # Start new game
         if user_id in active_wordle:
             w = active_wordle[user_id]
-            attempts_left = 6 - len(w["attempts"])
-            await m.reply(
-                f"🟩 **Wordle — Game Active!**\n\n"
-                f"5-letter word guess karo!\n"
-                f"Attempts left: **{attempts_left}/6**\n\n"
-                f"Previous guesses:\n" + 
-                "\n".join(w["attempts"]) +
-                f"\n\n`/wordle GUESS` — e.g. `/wordle MUSIC`"
-            )
-            return
-        word = random.choice(WORDLE_WORDS)
-        active_wordle[user_id] = {"word": word, "attempts": []}
-        await m.reply(
-            f"🟩 **WORDLE!**\n\n"
-            f"5-letter English word guess karo!\n\n"
-            f"🟩 = Sahi letter, sahi jagah\n"
-            f"🟨 = Letter hai, galat jagah\n"
-            f"⬜ = Letter nahi hai\n\n"
-            f"6 attempts milte hain!\n\n"
-            f"`/wordle MUSIC` — aise guess karo!"
-        )
+            prev = "\n".join(w["attempts"]) if w["attempts"] else "No guesses yet"
+            await m.reply(f"🟩 **Active Wordle:**\n\n{prev}\n\nAttempts: **{len(w['attempts'])}/20**\n`/g WORD` to guess")
+        else:
+            await m.reply("❌ No active game! Start with `/wordle`")
+        return
+    if user_id not in active_wordle:
+        await m.reply("❌ Start game first with `/wordle`!")
         return
     guess = parts[1].strip().upper()
     if len(guess) != 5 or not guess.isalpha():
-        await m.reply("❌ Sirf 5-letter English word guess karo!")
-        return
-    if user_id not in active_wordle:
-        await m.reply("❌ Pehle `/wordle` se game shuru karo!")
+        await m.reply("❌ Must be a 5-letter word! e.g. `/g MUSIC`")
         return
     w = active_wordle[user_id]
     word = w["word"]
-    # Generate colored result
     result = ""
     for i, ch in enumerate(guess):
         if ch == word[i]:
@@ -3192,35 +3221,43 @@ async def wordle_cmd(_, m: Message):
     w["attempts"].append(attempt_line)
     active_wordle[user_id] = w
     attempts_used = len(w["attempts"])
+    prev = "\n".join(w["attempts"])
+
     if guess == word:
         del active_wordle[user_id]
         db.ensure_user(user_id, m.from_user.first_name)
-        xp = max(20, 120 - (attempts_used-1)*20)
+        if attempts_used <= 5:
+            xp = 30
+        elif attempts_used <= 10:
+            xp = 25
+        else:
+            xp = 15
         db.add_xp(user_id, xp)
-        prev_attempts = "\n".join(w["attempts"])
         await m.reply(
-            f"🎉 **SAHI! {m.from_user.first_name}!**\n\n"
-            f"{prev_attempts}"
-            f"\n\n🟩 Word: **{word}**\n"
-            f"Attempts: **{attempts_used}/6**\n"
-            f"✨ +{xp} XP!\n\n"
-            f"🟩 `/wordle` — Naya game!"
+            f"🎉 **Correct! {m.from_user.first_name}!**\n\n"
+            f"{prev}\n\n"
+            f"🟩 Word: **{word}**\n"
+            f"Attempts: **{attempts_used}/20** | ✨ +{xp} XP!\n\n"
+            f"Play again: `/wordle`"
         )
-    elif attempts_used >= 6:
+    elif attempts_used >= 20:
         del active_wordle[user_id]
-        prev_attempts2 = "\n".join(w["attempts"])
         await m.reply(
             f"💀 **Game Over!**\n\n"
-            f"{prev_attempts2}"
-            f"\n\n🔤 Word tha: **{word}**\n"
-            f"🟩 `/wordle` — Try again!"
+            f"{prev}\n\n"
+            f"🔤 Word was: **{word}**\n"
+            f"Try again: `/wordle`"
         )
     else:
-        prev = "\n".join(w["attempts"])
+        hint_text = ""
+        if attempts_used == 11:
+            hint_text = "\n\n" + _get_wordle_hint(word, w["attempts"])
+        elif attempts_used == 18:
+            hint_text = "\n\n" + _get_wordle_hint(word, w["attempts"])
         await m.reply(
             f"{prev}\n\n"
-            f"Attempts: **{attempts_used}/6**\n"
-            f"`/wordle GUESS` — Next guess!"
+            f"Attempts: **{attempts_used}/20**{hint_text}\n"
+            f"`/g WORD` — Next guess!"
         )
 
 
@@ -3272,10 +3309,12 @@ MENU_PAGES = {
             ("🔢 /guess", "Number guess"), ("💣 /bomb", "Bomb game"),
             ("⚔️ /duel", "Duel"), ("🟩 /wordle", "Wordle"),
         ],
+    ],
+    "chat": [
         [
+            ("💬 /chat", "Start AI chat"), ("🗑 /clearchat", "Clear chat history"),
             ("💬 /quote", "Music quote"), ("🎵 /musicfact", "Music fact"),
             ("🥚 /easteregg", "Easter egg"), ("🔮 /secret", "Secret"),
-            ("💬 /chat", "AI Chat"), ("🗑 /clearchat", "Clear chat"),
         ],
     ],
     "profile": [
@@ -3292,14 +3331,13 @@ MENU_PAGES = {
         [
             ("🔔 /subscribe", "Subscribe"), ("🔕 /unsubscribe", "Unsubscribe"),
             ("🤝 /invite", "Invite friends"), ("📝 /note", "Add note"),
-            ("📊 /genrestats", "Genre stats"),
         ],
     ],
     "stats": [
         [
             ("📊 /stats", "Bot stats"), ("⏰ /uptime", "Uptime"),
             ("🏓 /ping", "Ping"), ("🎵 /songstats", "Song stats"),
-            ("📊 /activestats", "Active users"),
+            ("📊 /activestats", "Active users"), ("📊 /genrestats", "Genre stats"),
         ],
         [
             ("🏆 /gleaderboard", "Group leaderboard"), ("📊 /groupstats", "Group stats"),
@@ -3312,33 +3350,21 @@ MENU_PAGES = {
 MENU_TITLES = {
     "music": "🎵 Music", "discover": "🌍 Discover",
     "games": "🎮 Games", "fun": "🕹 Fun Games",
-    "profile": "👤 Profile", "stats": "📊 Stats",
+    "chat": "💬 Chat & More", "profile": "👤 Profile",
+    "stats": "📊 Stats",
 }
 
 def build_menu_keyboard(section, page):
     pages = MENU_PAGES[section]
     total = len(pages)
     page = max(1, min(page, total))
-    items = pages[page - 1]
-    
-    # Command buttons - 2 per row
-    rows = []
-    for i in range(0, len(items), 2):
-        row = []
-        for cmd, desc in items[i:i+2]:
-            row.append(InlineKeyboardButton(cmd, callback_data=f"cmd_info_{cmd.split()[1]}"))
-        rows.append(row)
-    
-    # Navigation row
     nav = []
     if page > 1:
         nav.append(InlineKeyboardButton("⬅️ Back", callback_data=f"menu_{section}_{page-1}"))
     nav.append(InlineKeyboardButton("🏠 Home", callback_data="menu_home"))
     if page < total:
         nav.append(InlineKeyboardButton("➡️ Next", callback_data=f"menu_{section}_{page+1}"))
-    rows.append(nav)
-    
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup([nav])
 
 def build_menu_text(section, page):
     pages = MENU_PAGES[section]
@@ -3360,8 +3386,9 @@ async def menu_home(_, cb):
          InlineKeyboardButton("🌍 Discover", callback_data="menu_discover_1")],
         [InlineKeyboardButton("🎮 Games", callback_data="menu_games_1"),
          InlineKeyboardButton("🕹 Fun Games", callback_data="menu_fun_1")],
-        [InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1"),
-         InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
+        [InlineKeyboardButton("💬 Chat & More", callback_data="menu_chat_1"),
+         InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1")],
+        [InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
     ])
     await cb.message.edit_text(
         "🎧 **BeatNova Menu**\n\n"
@@ -3372,7 +3399,7 @@ async def menu_home(_, cb):
     )
     await cb.answer()
 
-@app.on_callback_query(filters.regex(r"^menu_(music|discover|games|fun|profile|stats)_(\d+)$"))
+@app.on_callback_query(filters.regex(r"^menu_(music|discover|games|fun|chat|profile|stats)_(\d+)$"))
 async def menu_page(_, cb):
     parts = cb.data.split("_")
     section = parts[1]
