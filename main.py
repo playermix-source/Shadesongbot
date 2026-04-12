@@ -427,8 +427,9 @@ async def send_song(m, query, msg, quality="320"):
             caption=(f"🎵 **{title}**\n"
                      f"💿 {album} | 📅 {year}\n"
                      f"⏱ {mins}:{secs:02d} | 🎧 {quality}kbps\n"
-                     f"👤 {m.from_user.first_name}\n\n"
-                     f"🤖 {BOT_NAME} | {BOT_USERNAME}"),
+                     f"👤 {m.from_user.first_name}\n"
+                     f"━━━━━━━━━━━━━━━\n"
+                     f"🎧 Powered by BeatNova"),
             title=song_name,
             performer=artist_name,
             duration=duration,
@@ -494,7 +495,6 @@ async def send_song(m, query, msg, quality="320"):
                   f"🏅 Badge: **Music Explorer**{streak_bonus}")
         await m.reply(xp_msg)
     elif not is_group:
-        # Private chat mein XP show karo
         await m.reply(f"✨ +{xp_earned} XP{streak_bonus} | {get_xp_bar(total_xp)} Lv.{new_level}")
 
     try: os.remove(path)
@@ -1676,14 +1676,20 @@ async def guesssong(_, m: Message):
 @app.on_message(filters.command("help"))
 async def help_cmd(_, m: Message):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎵 Download & Search", callback_data="help_download"),
-         InlineKeyboardButton("🌍 Discover", callback_data="help_discover")],
-        [InlineKeyboardButton("🎮 Music Games", callback_data="help_games"),
-         InlineKeyboardButton("🕹 Fun Games", callback_data="help_fungames")],
-    [InlineKeyboardButton("👤 My Account", callback_data="help_account")],
-        [InlineKeyboardButton("📊 Stats & Info", callback_data="help_stats")]
+        [InlineKeyboardButton("🎵 Music", callback_data="menu_music_1"),
+         InlineKeyboardButton("🌍 Discover", callback_data="menu_discover_1")],
+        [InlineKeyboardButton("🎮 Games", callback_data="menu_games_1"),
+         InlineKeyboardButton("🕹 Fun Games", callback_data="menu_fun_1")],
+        [InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1"),
+         InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
     ])
-    await m.reply(f"❓ **{BOT_NAME} Help Menu**\n\nChoose a category below 👇", reply_markup=keyboard)
+    await m.reply(
+        "🎧 **BeatNova Help Menu**\n\n"
+        "👇 Choose a category:\n"
+        "━━━━━━━━━━━━━━━\n"
+        "🎧 Powered by BeatNova",
+        reply_markup=keyboard
+    )
 
 @app.on_message(filters.command("hindi"))
 async def hindi(_, m: Message):
@@ -2710,29 +2716,26 @@ async def start(_, m: Message):
     user_id = m.from_user.id
     db.ensure_user(user_id, m.from_user.first_name)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎵 Download & Search", callback_data="help_download"),
-         InlineKeyboardButton("🌍 Discover", callback_data="help_discover")],
-        [InlineKeyboardButton("🎮 Music Games", callback_data="help_games"),
-         InlineKeyboardButton("🕹 Fun Games", callback_data="help_fungames")],
-    [InlineKeyboardButton("👤 My Account", callback_data="help_account")],
-        [InlineKeyboardButton("📊 Stats & Info", callback_data="help_stats")]
+        [InlineKeyboardButton("🎵 Music", callback_data="menu_music_1"),
+         InlineKeyboardButton("🌍 Discover", callback_data="menu_discover_1")],
+        [InlineKeyboardButton("🎮 Games", callback_data="menu_games_1"),
+         InlineKeyboardButton("🕹 Fun Games", callback_data="menu_fun_1")],
+        [InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1"),
+         InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
     ])
-    await m.reply(f"🎵 **Welcome to {BOT_NAME}!**\n"
-                  f"Hello {m.from_user.first_name}! 👋\n\n"
-                  f"🤖 Your ultimate music companion!\n\n"
-                  f"━━━━━━━━━━━━━━━━━━━━\n"
-                  f"🚀 **Quick Start:**\n"
-                  f"📥 `/download Tum Hi Ho`\n"
-                  f"🔍 `/search Arijit Singh`\n"
-                  f"🎭 `/mood happy`\n"
-                  f"🎮 `/guesssong`\n"
-                  f"🎁 `/dailyreward` — Free XP!\n"
-                  f"💬 `/chat Kya chal raha hai?` — AI Chat!\n\n"
-                  f"━━━━━━━━━━━━━━━━━━━━\n"
-                  f"📋 **Browse commands below** 👇\n"
-                  f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                  f"⚠️ **Bug/Issue?** Contact: {DEVELOPER}",
-                  reply_markup=keyboard)
+    await m.reply(
+        f"🎧 **Welcome to BeatNova!**\n\n"
+        f"Download your favorite songs instantly 🎵\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📥 Try now:\n"
+        f"`/download Tum Hi Ho`\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"👇 Tap below to explore\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🎧 Powered by BeatNova\n"
+        f"⚠️ Support: @BF_ZeroShade",
+        reply_markup=keyboard
+    )
 
 @app.on_message(filters.command("stats"))
 async def bot_stats(_, m: Message):
@@ -2746,8 +2749,9 @@ async def bot_stats(_, m: Message):
                   f"📅 Today: {today_downloads['count']}\n"
                   f"🔔 Subscribers: {len(db.get_subscribers())}\n"
                   f"⏰ Uptime: {hours}h {mins}m\n"
-                  f"🎵 Database: JioSaavn + SQLite\n\n"
-                  f"⚠️ Issues? Contact: {DEVELOPER}")
+                  f"🎵 Database: JioSaavn + SQLite\n"
+                  f"━━━━━━━━━━━━━━━\n"
+                  f"🎧 Powered by BeatNova")
 
 @app.on_message(filters.command("stopparty"))
 async def stopparty(_, m: Message):
@@ -3689,6 +3693,182 @@ async def wordle_cmd(_, m: Message):
             f"Attempts: **{attempts_used}/6**\n"
             f"`/wordle GUESS` — Next guess!"
         )
+
+
+# ===== PAGINATED MENU SYSTEM =====
+
+MENU_PAGES = {
+    "music": [
+        [
+            ("📥 /download", "Download songs"), ("🔍 /search", "Search songs"),
+            ("📝 /lyrics", "Get lyrics"), ("🎧 /preview", "Preview 30sec"),
+            ("ℹ️ /info", "Song info"), ("🎧 /quality", "Choose quality"),
+        ],
+        [
+            ("🎛 /remix", "Find remixes"), ("🎸 /acoustic", "Acoustic versions"),
+            ("🎤 /cover", "Cover versions"), ("🎼 /lofi", "Lo-fi versions"),
+            ("📦 /batch", "Batch download"), ("🎼 /karaoke", "Karaoke/instrumental"),
+        ],
+        [
+            ("⏱ /short", "Short songs"), ("🎵 /similar", "Similar songs"),
+            ("📅 /year", "Songs by year"), ("🔗 /chain", "Song chain"),
+            ("🎶 /duet", "Duets"), ("🎵 /play", "Voice chat"),
+        ],
+    ],
+    "discover": [
+        [
+            ("🎭 /mood", "Mood songs"), ("🎲 /random", "Random song"),
+            ("🌍 /trending", "Trending now"), ("🆕 /newreleases", "New releases"),
+            ("🔥 /top2025", "Top 2025"), ("🎯 /recommend", "Recommendations"),
+        ],
+        [
+            ("🇮🇳 /hindi", "Hindi songs"), ("🎵 /punjabi", "Punjabi songs"),
+            ("🌍 /english", "English songs"), ("🌍 /regional", "Regional languages"),
+            ("🎸 /genre", "By genre"), ("🎭 /vibe", "Vibe check"),
+        ],
+        [
+            ("💿 /album", "Albums"), ("💿 /albuminfo", "Album info"),
+            ("🎤 /artist", "Artist songs"), ("ℹ️ /artistinfo", "Artist info"),
+            ("🏆 /topartist", "Top by artist"), ("💿 /discography", "Discography"),
+        ],
+        [
+            ("🤖 /ai_playlist", "AI Playlist"), ("📅 /daily", "Daily song"),
+            ("🌙 /night", "Night songs"), ("🎂 /birthday", "Birthday songs"),
+            ("🔤 /findlyrics", "Find by lyrics"), ("🎵 /playlist", "Playlist"),
+        ],
+    ],
+    "games": [
+        [
+            ("🎯 /guesssong", "Guess the song"), ("🎮 /musicquiz", "Music quiz"),
+            ("🎤 /artistquiz", "Artist quiz"), ("📝 /fillblank", "Fill blank"),
+            ("📅 /yeargame", "Year game"), ("📅 /challenge", "Daily challenge"),
+        ],
+        [
+            ("🏆 /tournament", "Tournament"), ("⚖️ /compare", "Compare songs"),
+            ("👥 /groupquiz", "Group quiz"), ("⚔️ /songbattle", "Song battle"),
+            ("📊 /votesong", "Vote song"), ("🎉 /party", "Party mode"),
+        ],
+        [
+            ("➕ /addsong", "Add to queue"), ("📋 /partyqueue", "Party queue"),
+            ("⏭ /skipparty", "Skip song"), ("🛑 /stopparty", "Stop party"),
+            ("⭐ /rate", "Rate song"), ("🏆 /topsongs", "Top rated"),
+        ],
+    ],
+    "fun": [
+        [
+            ("🎰 /slots", "Slot machine"), ("🎲 /dice", "Dice roll"),
+            ("🔢 /guess", "Number guess"), ("💣 /bomb", "Bomb game"),
+            ("⚔️ /duel", "Duel"), ("🟩 /wordle", "Wordle"),
+        ],
+        [
+            ("💬 /quote", "Music quote"), ("🎵 /musicfact", "Music fact"),
+            ("🥚 /easteregg", "Easter egg"), ("🔮 /secret", "Secret"),
+            ("💬 /chat", "AI Chat"), ("🗑 /clearchat", "Clear chat"),
+        ],
+    ],
+    "profile": [
+        [
+            ("👤 /profile", "Your profile"), ("📊 /mystats", "Your stats"),
+            ("🏅 /badges", "Badges"), ("🔥 /streak", "Streak"),
+            ("🎁 /dailyreward", "Daily reward"), ("🏆 /leaderboard", "Leaderboard"),
+        ],
+        [
+            ("⭐ /favorites", "Favorites"), ("💾 /save", "Save song"),
+            ("🗑 /removefav", "Remove fav"), ("📜 /history", "History"),
+            ("📋 /wishlist", "Add wishlist"), ("📋 /mywishlist", "My wishlist"),
+        ],
+        [
+            ("🔔 /subscribe", "Subscribe"), ("🔕 /unsubscribe", "Unsubscribe"),
+            ("📤 /share", "Share song"), ("🤝 /invite", "Invite friends"),
+            ("📝 /note", "Add note"), ("📊 /genrestats", "Genre stats"),
+        ],
+    ],
+    "stats": [
+        [
+            ("📊 /stats", "Bot stats"), ("📅 /todaystats", "Today stats"),
+            ("⏰ /uptime", "Uptime"), ("🏓 /ping", "Ping"),
+            ("🎵 /songstats", "Song stats"), ("📊 /activestats", "Active users"),
+        ],
+        [
+            ("🏆 /gleaderboard", "Group leaderboard"), ("📊 /groupstats", "Group stats"),
+            ("🥇 /topuser", "Top user"), ("🎵 /lastdownload", "Last download"),
+            ("🎵 /musicmatch", "Music match"), ("📊 /activestats", "Active stats"),
+        ],
+    ],
+}
+
+MENU_TITLES = {
+    "music": "🎵 Music", "discover": "🌍 Discover",
+    "games": "🎮 Games", "fun": "🕹 Fun Games",
+    "profile": "👤 Profile", "stats": "📊 Stats",
+}
+
+def build_menu_keyboard(section, page):
+    pages = MENU_PAGES[section]
+    total = len(pages)
+    page = max(1, min(page, total))
+    items = pages[page - 1]
+    
+    # Command buttons - 2 per row
+    rows = []
+    for i in range(0, len(items), 2):
+        row = []
+        for cmd, desc in items[i:i+2]:
+            row.append(InlineKeyboardButton(cmd, callback_data=f"cmd_info_{cmd.split()[1]}"))
+        rows.append(row)
+    
+    # Navigation row
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("⬅️ Back", callback_data=f"menu_{section}_{page-1}"))
+    nav.append(InlineKeyboardButton("🏠 Home", callback_data="menu_home"))
+    if page < total:
+        nav.append(InlineKeyboardButton("➡️ Next", callback_data=f"menu_{section}_{page+1}"))
+    rows.append(nav)
+    
+    return InlineKeyboardMarkup(rows)
+
+def build_menu_text(section, page):
+    pages = MENU_PAGES[section]
+    total = len(pages)
+    page = max(1, min(page, total))
+    items = pages[page - 1]
+    title = MENU_TITLES[section]
+    
+    text = f"**{title} ({page}/{total})**\n\n"
+    for cmd, desc in items:
+        text += f"{cmd} — {desc}\n"
+    text += f"\n━━━━━━━━━━━━━━━\n🎧 Powered by BeatNova"
+    return text
+
+@app.on_callback_query(filters.regex(r"^menu_home$"))
+async def menu_home(_, cb):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎵 Music", callback_data="menu_music_1"),
+         InlineKeyboardButton("🌍 Discover", callback_data="menu_discover_1")],
+        [InlineKeyboardButton("🎮 Games", callback_data="menu_games_1"),
+         InlineKeyboardButton("🕹 Fun Games", callback_data="menu_fun_1")],
+        [InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1"),
+         InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
+    ])
+    await cb.message.edit_text(
+        "🎧 **BeatNova Menu**\n\n"
+        "👇 Choose a category:\n"
+        "━━━━━━━━━━━━━━━\n"
+        "🎧 Powered by BeatNova",
+        reply_markup=keyboard
+    )
+    await cb.answer()
+
+@app.on_callback_query(filters.regex(r"^menu_(music|discover|games|fun|profile|stats)_(\d+)$"))
+async def menu_page(_, cb):
+    parts = cb.data.split("_")
+    section = parts[1]
+    page = int(parts[2])
+    text = build_menu_text(section, page)
+    keyboard = build_menu_keyboard(section, page)
+    await cb.message.edit_text(text, reply_markup=keyboard)
+    await cb.answer()
 
 async def main():
     await app.start()
