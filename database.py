@@ -88,9 +88,85 @@ def init_db():
         user_id INTEGER PRIMARY KEY, last_claim TEXT
     )""")
 
+    c.execute("""CREATE TABLE IF NOT EXISTS wordle_stats (
+        user_id INTEGER PRIMARY KEY,
+        name TEXT,
+        wins INTEGER DEFAULT 0,
+        streak INTEGER DEFAULT 0,
+        last_played TEXT
+    )""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS daily_wordle (
+        date TEXT PRIMARY KEY,
+        word TEXT
+    )""")
+
     conn.commit()
     conn.close()
     print("✅ Database initialized!")
+
+
+# ========== WORDLE STATS ==========
+
+def get_wordle_stats(user_id):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM wordle_stats WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else {"user_id": user_id, "wins": 0, "streak": 0, "last_played": None}
+
+def record_wordle_win(user_id, name):
+    conn = get_conn()
+    c = conn.cursor()
+    today = datetime.date.today().isoformat()
+    c.execute("SELECT streak, last_played FROM wordle_stats WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    if row:
+        last = row["last_played"]
+        streak = row["streak"] or 0
+        if last:
+            try:
+                diff = (datetime.date.today() - datetime.date.fromisoformat(last)).days
+                if diff == 1:
+                    streak += 1
+                elif diff > 1:
+                    streak = 1
+            except:
+                streak = 1
+        else:
+            streak = 1
+        c.execute("""UPDATE wordle_stats SET wins=wins+1, streak=?, last_played=?, name=?
+            WHERE user_id=?""", (streak, today, name, user_id))
+    else:
+        c.execute("""INSERT INTO wordle_stats (user_id, name, wins, streak, last_played)
+            VALUES (?,?,1,1,?)""", (user_id, name, today))
+    conn.commit()
+    conn.close()
+
+def get_wordle_leaderboard(limit=10):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT user_id, name, wins, streak FROM wordle_stats ORDER BY wins DESC LIMIT ?", (limit,))
+    rows = c.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_or_create_daily_wordle(word_pool):
+    import random as _random
+    conn = get_conn()
+    c = conn.cursor()
+    today = datetime.date.today().isoformat()
+    c.execute("SELECT word FROM daily_wordle WHERE date=?", (today,))
+    row = c.fetchone()
+    if row:
+        conn.close()
+        return row["word"]
+    word = _random.choice(word_pool)
+    c.execute("INSERT INTO daily_wordle (date, word) VALUES (?,?)", (today, word))
+    conn.commit()
+    conn.close()
+    return word
 
 # ========== USER ==========
 
