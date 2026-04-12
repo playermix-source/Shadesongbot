@@ -391,7 +391,7 @@ async def send_song(m, query, msg, quality="320"):
         year = "Unknown"
 
     reaction_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 Download", callback_data=f"dl_{title[:30]}"),
+        [InlineKeyboardButton("📤 Share", callback_data=f"share_{title[:30]}"),
          InlineKeyboardButton("📝 Lyrics", callback_data=f"lyr_{title[:35]}")],
         [InlineKeyboardButton("🎵 Similar", callback_data=f"sim_{title[:40]}"),
          InlineKeyboardButton("⭐ Save", callback_data=f"save_{title[:40]}")],
@@ -504,8 +504,8 @@ async def send_song(m, query, msg, quality="320"):
                         try:
                             await msg.edit(
                                 f"✅ **{title}**\n"
-                                f"⚠️ Group mein slowmode ({secs_wait}s) hai!\n"
-                                f"📩 Song aapke PM mein bheja gaya!"
+                                f"⚠️ Group slowmode active ({secs_wait}s)!\n"
+                                f"📩 Song sent to your PM!"
                             )
                         except: pass
                     except Exception as e3:
@@ -545,12 +545,16 @@ async def send_song(m, query, msg, quality="320"):
 
 # ========== CALLBACKS ==========
 
-@app.on_callback_query(filters.regex(r"^dl_"))
-async def dl_callback(_, cb):
-    song = cb.data[3:]
-    await cb.answer("Downloading...")
-    msg = await cb.message.reply(f"⬇️ Searching `{song}`...")
-    await send_song(cb.message, song, msg)
+@app.on_callback_query(filters.regex(r"^share_"))
+async def share_callback(_, cb):
+    song = cb.data[6:]
+    await cb.answer("Creating share card...", show_alert=False)
+    await cb.message.reply(
+        f"🎧 **Powered by BeatNova**\n"
+        f"🔥 Best Telegram Music Bot\n\n"
+        f"🎵 **{song}**\n\n"
+        f"👉 {BOT_USERNAME}"
+    )
 
 @app.on_callback_query(filters.regex(r"^save_"))
 async def save_callback(_, cb):
@@ -2581,18 +2585,23 @@ async def share(_, m: Message):
         return
     query = parts[1].strip()
     msg = await m.reply("📤 **Creating share card...**")
-    dl_url, title, duration, song_data = search_jiosaavn(query)
+    dl_url, title, duration, song_data = await asyncio.to_thread(search_jiosaavn, query)
     if not song_data:
         await msg.edit("❌ Song not found!")
         return
     mins, secs = duration // 60, duration % 60
     avg_rating, _ = db.get_avg_rating(song_data['name'][:25])
-    await msg.edit(f"🎵 **{song_data['name']}**\n"
-                   f"👤 Artist: {song_data['primaryArtists']}\n"
-                   f"💿 Album: {song_data.get('album',{}).get('name','Unknown')}\n"
-                   f"⏱ Duration: {mins}:{secs:02d} | 📅 {song_data.get('year','Unknown')}\n"
-                   f"⭐ Rating: {avg_rating:.1f}/5\n\n"
-                   f"🎧 Download from **{BOT_NAME}**\n👉 {BOT_USERNAME}")
+    name = song_data.get('name', query)
+    artist = song_data.get('primaryArtists', song_data.get('artist', 'Unknown'))
+    await msg.edit(
+        f"🎵 **{name}**\n"
+        f"👤 Artist: {artist}\n"
+        f"⏱ Duration: {mins}:{secs:02d} | 📅 {song_data.get('year', 'Unknown')}\n"
+        f"⭐ Rating: {avg_rating:.1f}/5\n\n"
+        f"🎧 **Powered by BeatNova**\n"
+        f"🔥 Best Telegram Music Bot\n\n"
+        f"👉 {BOT_USERNAME}"
+    )
 
 @app.on_message(filters.command("short"))
 async def short(_, m: Message):
