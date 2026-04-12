@@ -465,26 +465,51 @@ async def send_song(m, query, msg, quality="320"):
                 import re
                 wait = re.search(r'\d+', err_str)
                 secs_wait = int(wait.group()) if wait else 10
-                try:
-                    await msg.edit(f"⏳ Slowmode hai! {secs_wait} sec mein retry karunga...")
-                except: pass
-                await asyncio.sleep(secs_wait)
-                try:
-                    await app.send_audio(
-                        m.chat.id, path,
-                        caption=(f"🎵 **{title}**\n"
-                                 f"💿 {album} | 📅 {year}\n"
-                                 f"⏱ {mins}:{secs:02d} | 🎧 {quality}kbps\n"
-                                 f"👤 {m.from_user.first_name}\n"
-                                 f"━━━━━━━━━━━━━━━\n"
-                                 f"🎧 Powered by BeatNova"),
-                        title=song_name,
-                        performer=artist_name,
-                        duration=duration,
-                        reply_markup=reaction_keyboard
-                    )
-                except Exception as e3:
-                    await msg.edit(f"❌ Retry bhi fail hua: `{str(e3)[:80]}`")
+                if secs_wait <= 30:
+                    # Thoda wait hai — retry kar lo
+                    try:
+                        await msg.edit(f"⏳ Slowmode! {secs_wait} sec mein retry karunga...")
+                    except: pass
+                    await asyncio.sleep(secs_wait)
+                    try:
+                        await app.send_audio(
+                            m.chat.id, path,
+                            caption=(f"🎵 **{title}**\n"
+                                     f"💿 {album} | 📅 {year}\n"
+                                     f"⏱ {mins}:{secs:02d} | 🎧 {quality}kbps\n"
+                                     f"👤 {m.from_user.first_name}\n"
+                                     f"━━━━━━━━━━━━━━━\n"
+                                     f"🎧 Powered by BeatNova"),
+                            title=song_name,
+                            performer=artist_name,
+                            duration=duration,
+                            reply_markup=reaction_keyboard
+                        )
+                    except Exception as e3:
+                        await msg.edit(f"❌ Retry bhi fail hua: `{str(e3)[:80]}`")
+                else:
+                    # Bahut zyada wait — PM mein bhejo
+                    try:
+                        await app.send_audio(
+                            m.from_user.id, path,
+                            caption=(f"🎵 **{title}**\n"
+                                     f"💿 {album} | 📅 {year}\n"
+                                     f"⏱ {mins}:{secs:02d} | 🎧 {quality}kbps\n"
+                                     f"🤖 {BOT_NAME} | {BOT_USERNAME}"),
+                            title=song_name,
+                            performer=artist_name,
+                            duration=duration,
+                            reply_markup=reaction_keyboard
+                        )
+                        try:
+                            await msg.edit(
+                                f"✅ **{title}**\n"
+                                f"⚠️ Group mein slowmode ({secs_wait}s) hai!\n"
+                                f"📩 Song aapke PM mein bheja gaya!"
+                            )
+                        except: pass
+                    except Exception as e3:
+                        await msg.edit(f"❌ PM mein bhi send nahi hua: `{str(e3)[:80]}`")
             else:
                 await msg.edit(f"❌ Error: `{err_str[:80]}`")
         try: os.remove(path)
