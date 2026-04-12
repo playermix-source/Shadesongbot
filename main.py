@@ -547,14 +547,20 @@ async def send_song(m, query, msg, quality="320"):
 
 @app.on_callback_query(filters.regex(r"^share_"))
 async def share_callback(_, cb):
-    song = cb.data[6:]
-    await cb.answer("Creating share card...", show_alert=False)
-    await cb.message.reply(
-        f"🎧 **Powered by BeatNova**\n"
-        f"🔥 Best Telegram Music Bot\n\n"
-        f"🎵 **{song}**\n\n"
-        f"👉 {BOT_USERNAME}"
-    )
+    # Forward the audio message itself so user can share it
+    try:
+        await cb.message.forward(cb.from_user.id)
+        await cb.answer("✅ Song forwarded to your PM!", show_alert=True)
+    except Exception:
+        # If forward fails, show share text
+        song = cb.data[6:]
+        await cb.answer("", show_alert=False)
+        await cb.message.reply(
+            f"🎧 **Powered by BeatNova**\n"
+            f"🔥 Best Telegram Music Bot\n\n"
+            f"🎵 **{song}**\n\n"
+            f"👉 {BOT_USERNAME}"
+        )
 
 @app.on_callback_query(filters.regex(r"^save_"))
 async def save_callback(_, cb):
@@ -2584,24 +2590,44 @@ async def share(_, m: Message):
         await m.reply("❌ Example: `/share Tum Hi Ho`")
         return
     query = parts[1].strip()
-    msg = await m.reply("📤 **Creating share card...**")
-    dl_url, title, duration, song_data = await asyncio.to_thread(search_jiosaavn, query)
-    if not song_data:
-        await msg.edit("❌ Song not found!")
-        return
-    mins, secs = duration // 60, duration % 60
-    avg_rating, _ = db.get_avg_rating(song_data['name'][:25])
-    name = song_data.get('name', query)
-    artist = song_data.get('primaryArtists', song_data.get('artist', 'Unknown'))
-    await msg.edit(
-        f"🎵 **{name}**\n"
-        f"👤 Artist: {artist}\n"
-        f"⏱ Duration: {mins}:{secs:02d} | 📅 {song_data.get('year', 'Unknown')}\n"
-        f"⭐ Rating: {avg_rating:.1f}/5\n\n"
-        f"🎧 **Powered by BeatNova**\n"
-        f"🔥 Best Telegram Music Bot\n\n"
-        f"👉 {BOT_USERNAME}"
-    )
+    msg = await m.reply("📤 **Searching song to share...**")
+    try:
+        dl_url, title, duration, song_data = await asyncio.to_thread(search_jiosaavn_quality, query, "320")
+        if not dl_url:
+            await msg.edit("❌ Song not found!")
+            return
+        await msg.edit(f"⬇️ **Downloading:** `{title}`...")
+        path = await asyncio.wait_for(
+            asyncio.to_thread(download_song_file, dl_url, title),
+            timeout=120
+        )
+        mins, secs = duration // 60, duration % 60
+        song_name = song_data.get("name", title) if song_data else title
+        artist_name = song_data.get("primaryArtists", song_data.get("artist", "")) if song_data else ""
+        album = song_data.get("album", "Unknown") if song_data else "Unknown"
+        year = str(song_data.get("year", "Unknown") or "Unknown") if song_data else "Unknown"
+        await msg.edit("📤 **Sending...**")
+        await app.send_audio(
+            m.chat.id, path,
+            caption=(
+                f"🎵 **{title}**\n"
+                f"👤 {artist_name}\n"
+                f"⏱ {mins}:{secs:02d} | 📅 {year}\n\n"
+                f"🎧 **Powered by BeatNova**\n"
+                f"🔥 Best Telegram Music Bot\n\n"
+                f"👉 {BOT_USERNAME}"
+            ),
+            title=song_name,
+            performer=artist_name,
+            duration=duration
+        )
+        await msg.delete()
+        try: os.remove(path)
+        except: pass
+    except asyncio.TimeoutError:
+        await msg.edit("❌ **Timeout!** Try again: `/share " + query + "`")
+    except Exception as e:
+        await msg.edit(f"❌ Error: `{str(e)[:80]}`")
 
 @app.on_message(filters.command("short"))
 async def short(_, m: Message):
@@ -3859,26 +3885,16 @@ def build_menu_keyboard(section, page):
     pages = MENU_PAGES[section]
     total = len(pages)
     page = max(1, min(page, total))
-    items = pages[page - 1]
     
-    # Command buttons - 2 per row
-    rows = []
-    for i in range(0, len(items), 2):
-        row = []
-        for cmd, desc in items[i:i+2]:
-            row.append(InlineKeyboardButton(cmd, callback_data=f"cmd_info_{cmd.split()[1]}"))
-        rows.append(row)
-    
-    # Navigation row
+    # Only navigation buttons — no command buttons
     nav = []
     if page > 1:
         nav.append(InlineKeyboardButton("⬅️ Back", callback_data=f"menu_{section}_{page-1}"))
     nav.append(InlineKeyboardButton("🏠 Home", callback_data="menu_home"))
     if page < total:
         nav.append(InlineKeyboardButton("➡️ Next", callback_data=f"menu_{section}_{page+1}"))
-    rows.append(nav)
     
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup([nav])
 
 def build_menu_text(section, page):
     pages = MENU_PAGES[section]
