@@ -25,67 +25,118 @@ PENALTY_WORDS = [
 
 # ==================== BEST MATCH ALGORITHM ====================
 
+def _normalize(text):
+    """Lowercase, strip punctuation for clean comparison"""
+    return re.sub(r'[^a-z0-9\s]', '', text.lower().strip())
+
+# These in song title or artist = definitely NOT the original
+HARD_PENALTY_NAME = [
+    "remix", "mashup", "bootleg", "redux", "rework",
+    "cover", "covered", "tribute", "recreated", "recreation", "remake",
+    "karaoke", "instrumental", "lofi", "lo-fi", "slowed", "reverb",
+    "unplugged", "acoustic", "extended", "live", "concert", "session",
+    "remastered", "reprise", "version", "edit",
+    "soundtrack", "ost", "bgm", "backing track",
+    "sing along", "sing-along",
+]
+
+# These in ARTIST field = probably a cover/tribute channel
+HARD_PENALTY_ARTIST = [
+    "anukriti", "t-series recreated", "cover", "tribute",
+    "karaoke", "instrumental", "recreated", "recreation",
+    "sing along", "sing-along",
+]
+
 def _find_best_match(results, query):
     """
-    Smart best match — finds exact or closest song, avoids unwanted versions
+    Find the original/official version of a song.
+    Priority: exact name + clean artist > exact name > best word match
+    Hard penalties for covers, remixes, recreations in both name and artist.
     """
     if not results:
         return None
     if len(results) == 1:
         return results[0]
 
-    query_clean = query.lower().strip()
-    # Remove common prefixes users add
-    for prefix in ["download ", "song ", "full song ", "audio "]:
-        query_clean = query_clean.replace(prefix, "")
+    query_clean = _normalize(query)
+    # Strip common user prefixes
+    for prefix in ["download ", "song ", "full song ", "audio ", "play "]:
+        if query_clean.startswith(prefix):
+            query_clean = query_clean[len(prefix):]
     query_words = set(query_clean.split())
+
+    # If user typed "song artist" like "pal pal talwinder", extract artist hint
+    # We'll boost songs whose artist matches the last word(s) of query
+    query_parts = query_clean.split()
+    artist_hint_words = set(query_parts[1:]) if len(query_parts) > 1 else set()
 
     scored = []
     for song in results:
-        name = song.get("name", "").lower().strip()
-        artist = song.get("primaryArtists", song.get("artist", "")).lower()
-        name_words = set(name.split())
+        raw_name = song.get("name", "")
+        raw_artist = song.get("primaryArtists", song.get("artist", ""))
+        name = _normalize(raw_name)
+        artist = _normalize(raw_artist)
         score = 0
 
-        # 1. Exact name match = perfect score
+        # ── NAME SCORING ──────────────────────────────────────────
         if name == query_clean:
-            return song
+            score += 100  # Exact match base
+        else:
+            name_words = set(name.split())
+            matched = query_words & name_words
+            score += len(matched) * 15
 
-        # 2. Word match score
-        matched = query_words & name_words
-        score += len(matched) * 10
+            # Penalize extra unmatched words in name (additions like "female version")
+            extra_words = name_words - query_words
+            score -= len(extra_words) * 3
 
-        # 3. Penalize extra words not in query
-        extra = name_words - query_words
-        for word in extra:
-            word_clean = re.sub(r'[^a-z0-9]', '', word)
-            if word_clean in [re.sub(r'[^a-z0-9]', '', p) for p in PENALTY_WORDS]:
-                score -= 20
+        # ── HARD PENALTIES FOR NAME ───────────────────────────────
+        for bad in HARD_PENALTY_NAME:
+            if bad in name:
+                score -= 60
+                break  # One penalty is enough, don't stack
 
-        # 4. Penalize year in name if not in query
-        if not re.search(r'\b(19|20)\d{2}\b', query_clean):
-            if re.search(r'\b(19|20)\d{2}\b', name):
-                score -= 10
+        # Penalize version numbers / suffixes: "2.0", "v2" etc
+        if re.search(r'\b(v\d|2\.0|3\.0|\bii\b|\biii\b|\biv\b)\b', name):
+            score -= 50
 
-        # 5. Bonus if name starts with query words
-        first_word = query_clean.split()[0] if query_clean.split() else ""
-        if name.startswith(first_word):
-            score += 8
+        # ── HARD PENALTIES FOR ARTIST ─────────────────────────────
+        for bad in HARD_PENALTY_ARTIST:
+            if bad in artist:
+                score -= 70
+                break
 
-        # 6. Bonus if artist name matches query
-        artist_words = set(artist.split(",")[0].strip().split())
-        if artist_words & query_words:
-            score += 5
+        # ── ARTIST HINT BOOST ─────────────────────────────────────
+        # If user typed artist name in query, heavily boost matching songs
+        if artist_hint_words:
+            artist_words = set(artist.split())
+            if artist_hint_words & artist_words:
+                score += 50  # Strong signal — user specified artist
 
-        # 7. Shorter name = closer to original (penalize long additions)
-        name_extra_len = len(name) - len(query_clean)
-        if name_extra_len > 10:
-            score -= min(name_extra_len // 5, 10)
+        # ── POPULARITY BOOST ──────────────────────────────────────
+        play_count = song.get("playCount", song.get("play_count", 0))
+        try:
+            pc = int(str(play_count).replace(",", ""))
+            if pc > 10_000_000:
+                score += 20
+            elif pc > 1_000_000:
+                score += 10
+        except (ValueError, TypeError):
+            pass
+
+        # ── DURATION SANITY ───────────────────────────────────────
+        # Instrumental/karaoke tracks are often much shorter
+        duration = int(song.get("duration", 0))
+        if 0 < duration < 60:
+            score -= 30  # Too short — probably a clip/promo
 
         scored.append((score, song))
 
-    # Sort by score descending
     scored.sort(key=lambda x: x[0], reverse=True)
+
+    # Debug log (Railway logs mein dikhe ga)
+    print(f"[MATCH] Query: '{query}' → Best: '{scored[0][1].get('name')}' by '{scored[0][1].get('artist', scored[0][1].get('primaryArtists'))}' (score: {scored[0][0]})")
+
     return scored[0][1]
 
 def _get_best_download_url(dl_urls, quality="320", key="url"):
@@ -184,8 +235,8 @@ def _saavn_old(query, limit=10):
         print(f"[saavn_old] {e}")
         return []
 
-def _saavn_quality(query, quality="320", limit=10):
-    """Get best quality song download URL"""
+def _saavn_quality(query, quality="320", limit=15):
+    """Get best quality song download URL — uses upgraded _find_best_match"""
     # Try saavn.dev first
     try:
         r = requests.get(
@@ -196,12 +247,20 @@ def _saavn_quality(query, quality="320", limit=10):
         if r.status_code == 200:
             results = r.json().get("data", {}).get("results", [])
             if results:
-                s = _find_best_match([{
-                    "name": x.get("name", ""),
-                    "artist": ", ".join(a["name"] for a in x.get("artists", {}).get("primary", [])),
-                    "primaryArtists": ", ".join(a["name"] for a in x.get("artists", {}).get("primary", [])),
-                    "_raw": x
-                } for x in results], query)
+                # Pass full data so _find_best_match has playCount, duration etc
+                mapped = []
+                for x in results:
+                    artists = x.get("artists", {}).get("primary", [])
+                    artist_str = ", ".join(a["name"] for a in artists) if artists else "Unknown"
+                    mapped.append({
+                        "name": x.get("name", ""),
+                        "artist": artist_str,
+                        "primaryArtists": artist_str,
+                        "duration": int(x.get("duration", 0)),
+                        "playCount": x.get("playCount", 0),
+                        "_raw": x
+                    })
+                s = _find_best_match(mapped, query)
                 if s:
                     raw = s.get("_raw") or next((x for x in results if x.get("name") == s.get("name")), results[0])
                     dl_urls = raw.get("downloadUrl", [])
@@ -211,7 +270,7 @@ def _saavn_quality(query, quality="320", limit=10):
                         artist_str = ", ".join(a["name"] for a in artists) if artists else "Unknown"
                         album_raw = raw.get("album", {})
                         album_str = album_raw.get("name", "Unknown") if isinstance(album_raw, dict) else str(album_raw or "Unknown")
-                        print(f"[saavn.dev] ✅ {raw.get('name')} | {dl_url[:50]}")
+                        print(f"[saavn.dev] ✅ '{raw.get('name')}' by '{artist_str}'")
                         return {
                             "source": "jiosaavn",
                             "name": raw.get("name", "Unknown"),
@@ -237,7 +296,13 @@ def _saavn_quality(query, quality="320", limit=10):
         if r2.status_code == 200:
             results_old = r2.json()["data"]["results"]
             if results_old:
-                mapped = [{"name": x.get("name",""), "artist": x.get("primaryArtists",""), "primaryArtists": x.get("primaryArtists",""), "_raw": x} for x in results_old]
+                mapped = [{
+                    "name": x.get("name", ""),
+                    "artist": x.get("primaryArtists", ""),
+                    "primaryArtists": x.get("primaryArtists", ""),
+                    "duration": int(x.get("duration", 0)),
+                    "_raw": x
+                } for x in results_old]
                 s = _find_best_match(mapped, query)
                 if s:
                     raw = s.get("_raw") or results_old[0]
@@ -246,7 +311,7 @@ def _saavn_quality(query, quality="320", limit=10):
                     if dl_url:
                         album_raw = raw.get("album", {})
                         album_str = album_raw.get("name", "Unknown") if isinstance(album_raw, dict) else str(album_raw or "Unknown")
-                        print(f"[saavn_old] ✅ {raw.get('name')} | {dl_url[:50]}")
+                        print(f"[saavn_old] ✅ '{raw.get('name')}' by '{raw.get('primaryArtists')}'")
                         return {
                             "source": "jiosaavn",
                             "name": raw.get("name", "Unknown"),
