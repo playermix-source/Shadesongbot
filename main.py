@@ -460,35 +460,49 @@ async def send_song(m, query, msg, quality="320"):
         )
     except Exception as e:
         err_str = str(e)
-        if "CHAT_SEND_AUDIO" in err_str or "403" in err_str or "Forbidden" in err_str:
-            # Group mein audio permission nahi — PM mein bhejo
+        # Any restriction → send to PM instead
+        should_dm = any(x in err_str for x in [
+            "SLOWMODE_WAIT", "CHAT_SEND_AUDIO", "CHAT_WRITE_FORBIDDEN",
+            "403", "Forbidden", "USER_BANNED", "CHAT_RESTRICTED",
+            "RIGHT", "permission", "flood", "slow"
+        ])
+        if should_dm or m.chat.type.name in ("GROUP", "SUPERGROUP"):
+            DM_CAPTIONS = [
+                "🎵 Slid into your DMs with the goods 😎",
+                "📩 Group was being difficult, so here you go! 🎧",
+                "🚀 Delivered straight to your DMs — no drama!",
+                "🎶 The group couldn't handle it, but your DMs can 😄",
+                "💌 Special delivery — just for you!",
+                "🤫 Between us — here's your song!",
+            ]
+            GROUP_MSGS = [
+                f"✅ **{title}** — sent to your PM! 📩",
+                f"🎵 **{title}** — check your DMs! 😎",
+                f"📩 Dropped it in your DMs, {m.from_user.first_name}!",
+                f"🚀 **{title}** is in your inbox! Check DMs 👆",
+            ]
             try:
                 await app.send_audio(
                     m.from_user.id, path,
                     caption=(f"🎵 **{title}**\n"
                              f"💿 {album} | 📅 {year}\n"
-                             f"⏱ {mins}:{secs:02d} | 🎧 {quality}kbps\n"
-                             f"🤖 {BOT_NAME} | {BOT_USERNAME}"),
+                             f"⏱ {mins}:{secs:02d} | 🎧 {quality}kbps\n\n"
+                             f"{random.choice(DM_CAPTIONS)}\n"
+                             f"━━━━━━━━━━━━━━━\n"
+                             f"🎧 {BOT_NAME} | {BOT_USERNAME}"),
                     title=song_name,
                     performer=artist_name,
                     duration=duration,
                     reply_markup=reaction_keyboard
                 )
                 try:
-                    await msg.edit(
-                        f"✅ **{title}**\n"
-                        f"📩 Audio permission nahi hai yahan!\n"
-                        f"Song aapke PM mein bheja gaya! 👆"
-                    )
+                    await msg.edit(random.choice(GROUP_MSGS))
                 except: pass
             except Exception as e2:
                 await msg.edit(
-                    f"⚠️ **Group mein audio send nahi ho sakta!**\n\n"
-                    f"**To fix:**\n"
-                    f"1. Make the bot an **Admin**\n"
-                    f"2. Or grant **Media** permission\n\n"
-                    f"🎵 Song: `{title}`\n"
-                    f"📩 Start a PM first: {BOT_USERNAME}"
+                    f"⚠️ **Couldn't send here or in DM!**\n\n"
+                    f"Please start a PM with me first: {BOT_USERNAME}\n"
+                    f"Then try again 🎵"
                 )
         else:
             await msg.edit(f"❌ Error: `{err_str[:80]}`")
