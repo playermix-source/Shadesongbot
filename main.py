@@ -1423,10 +1423,40 @@ async def discography(_, m: Message):
 async def download(_, m: Message):
     parts = m.text.split(None, 1)
     if len(parts) < 2 or not parts[1].strip() or parts[1].strip().lower() in PLACEHOLDERS:
-        await m.reply("❌ Song name likho!\nExample: `/download Tum Hi Ho`")
+        await m.reply("❌ Example: `/download Tum Hi Ho`")
         return
-    msg = await m.reply(f"🔍 **Searching:** `{parts[1].strip()}`...")
-    await send_song(m, parts[1].strip(), msg)
+    query = parts[1].strip()
+    is_group = m.chat.type.name in ("GROUP", "SUPERGROUP")
+    if is_group:
+        # Send to DM directly — avoid all group restrictions (slowmode, permissions, etc.)
+        try:
+            dm_msg = await app.send_message(
+                m.from_user.id,
+                f"🔍 **Searching:** `{query}`..."
+            )
+            # Notify group
+            GROUP_ACK = [
+                f"📩 Sending to your DMs, {m.from_user.first_name}! 🎧",
+                f"🚀 Check your DMs, {m.from_user.first_name}!",
+                f"💌 On its way to your inbox, {m.from_user.first_name}!",
+            ]
+            await m.reply(random.choice(GROUP_ACK))
+            # Create a fake message-like object with DM chat id for send_song
+            await send_song(dm_msg, query, dm_msg)
+        except Exception as e:
+            if "USER_PRIVACY_RESTRICTED" in str(e) or "user is bot" in str(e).lower():
+                await m.reply(
+                    f"📩 **Can't DM you!**\n\n"
+                    f"Please start a chat with me first: {BOT_USERNAME}\n"
+                    f"Then try `/download {query}` again!"
+                )
+            else:
+                # Fallback — try in group anyway
+                msg = await m.reply(f"🔍 **Searching:** `{query}`...")
+                await send_song(m, query, msg)
+    else:
+        msg = await m.reply(f"🔍 **Searching:** `{query}`...")
+        await send_song(m, query, msg)
 
 @app.on_message(filters.command("duet"))
 async def duet(_, m: Message):
