@@ -159,6 +159,34 @@ XP_REWARDS = {
     "quiz_win": 30,
 }
 
+LOADING_MESSAGES = [
+    ["🔍 Searching best quality...", "🎧 Fetching audio...", "⚡ Almost ready..."],
+    ["🎵 Finding the perfect version...", "📡 Connecting to servers...", "✅ Got it!"],
+    ["🕵️ Hunting down the track...", "🎙 Locking in audio quality...", "🚀 Sending your way!"],
+    ["🎼 Reading the sheet music... just kidding", "⚙️ Processing audio...", "📦 Packing it up!"],
+    ["🌐 Reaching across the internet...", "🎧 Buffering the beats...", "🔥 Here it comes!"],
+]
+
+MICRO_TIPS = [
+    "🎧 **BeatNova Tip:** Use `/srec` for personalized recommendations!",
+    "🎧 **BeatNova Tip:** Save your faves with `/save` while downloading!",
+    "🎧 **BeatNova Tip:** Try `/rlc Tum Hi Ho lofi` for chill versions!",
+    "🎧 **BeatNova Tip:** `/lang korean` for K-pop hits!",
+    "🎧 **BeatNova Tip:** Play `/wordle` daily to build your streak!",
+    "🎧 **BeatNova Tip:** Use `/quality` to pick your audio bitrate!",
+    "🎧 **BeatNova Tip:** `/dwordle` — same word for everyone, compete with friends!",
+    "🎧 **BeatNova Tip:** `/artist Arijit Singh` shows bio + top songs!",
+    "🎧 **BeatNova Tip:** Rate songs with `/rate` to earn XP!",
+    "🎧 **BeatNova Tip:** Check your badges with `/badges`!",
+]
+
+HOOK_SONGS = [
+    "Tum Hi Ho", "Kesariya", "Raataan Lambiyan", "Tera Ban Jaunga",
+    "Shayad", "Hawayein", "Channa Mereya", "Ae Dil Hai Mushkil",
+    "Shape of You", "Blinding Lights", "Stay", "As It Was",
+    "Husn", "Kahani Suno", "Ik Vaari Aa", "Phir Bhi Tumko Chahunga",
+]
+
 # ========== HELPERS ==========
 
 def update_today_stats():
@@ -333,9 +361,10 @@ async def send_song(m, query, msg, quality="320"):
     user_id = m.from_user.id
     is_first = db.get_user(user_id) is None or db.get_user(user_id)["downloads"] == 0
 
-    # Step 1: Show downloading
+    # Step 1: Show cool loading messages
+    loading_seq = random.choice(LOADING_MESSAGES)
     try:
-        await msg.edit(f"⬇️ **Downloading:** `{title}`...")
+        await msg.edit(f"**{loading_seq[0]}**")
     except: pass
 
     # Step 2: Download with timeout protection (120 sec max)
@@ -351,7 +380,7 @@ async def send_song(m, query, msg, quality="320"):
         err = str(e)
         # Try with alternate URL from different API
         try:
-            await msg.edit(f"⚠️ First source failed, trying backup...")
+            await msg.edit(f"**{loading_seq[1]}** (switching source...)")
             song_alt = await asyncio.to_thread(apis.search_song_download, query, quality)
             if song_alt and song_alt.get("download_url") and song_alt["download_url"] != dl_url:
                 path = await asyncio.wait_for(
@@ -402,7 +431,7 @@ async def send_song(m, query, msg, quality="320"):
     ])
 
     try:
-        await msg.edit("📤 **Sending...**")
+        await msg.edit(f"**{loading_seq[2]}**")
     except: pass
 
     is_group = m.chat.type.name in ("GROUP", "SUPERGROUP")
@@ -1415,7 +1444,7 @@ async def show_favorites(_, m: Message):
     user_id = m.from_user.id
     favs = db.get_favorites(user_id)
     if not favs:
-        await m.reply("💾 No favorites yet!\nUse `/save [song]`")
+        await m.reply("💾 **No favorites yet!**\n\n💡 **Try:**\n⭐ Save songs while downloading — tap the Save button\n🎵 Download first: `/download Tum Hi Ho`")
         return
     text = "⭐ **Your Favorites:**\n\n"
     for i, s in enumerate(favs, 1):
@@ -1481,7 +1510,7 @@ async def genrestats(_, m: Message):
     user_id = m.from_user.id
     songs = db.get_history(user_id, 50)
     if not songs:
-        await m.reply("❌ No history yet!\nDownload songs first.")
+        await m.reply("📊 **No listening history yet!**\n\n💡 **Start downloading to see your genre stats:**\n📥 `/download Tum Hi Ho`\n📥 `/download Shape of You`")
         return
     total = len(songs)
     hindi = sum(1 for s in songs if any(w in s.lower() for w in ["hindi","tum","dil","pyar","ishq","tera","mera"]))
@@ -1690,6 +1719,7 @@ async def guesssong(_, m: Message):
 
 @app.on_message(filters.command("help"))
 async def help_cmd(_, m: Message):
+    _bot_raw = BOT_USERNAME.replace("@", "")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎵 Music", callback_data="menu_music_1"),
          InlineKeyboardButton("🌍 Discover", callback_data="menu_discover_1")],
@@ -1698,6 +1728,7 @@ async def help_cmd(_, m: Message):
         [InlineKeyboardButton("💬 Chat & More", callback_data="menu_chat_1"),
          InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1")],
         [InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
+        [InlineKeyboardButton("➕ Add BeatNova to Your Group", url=f"https://t.me/{_bot_raw}?startgroup=true")],
     ])
     await m.reply(
         "🎧 **BeatNova Help Menu**\n\n"
@@ -1713,7 +1744,7 @@ async def show_history(_, m: Message):
     user_id = m.from_user.id
     songs = db.get_history(user_id)
     if not songs:
-        await m.reply("📜 No history yet!")
+        await m.reply("📜 **No history yet!**\n\n💡 **Get started:**\n📥 `/download Tum Hi Ho`\n🔍 `/search Arijit Singh`")
         return
     text = "📜 **Recent Songs:**\n\n"
     for i, s in enumerate(songs, 1):
@@ -2002,7 +2033,7 @@ async def mystats(_, m: Message):
     user_id = m.from_user.id
     user = db.get_user(user_id)
     if not user or user["downloads"] == 0:
-        await m.reply(f"👤 **{m.from_user.first_name}'s Stats:**\n\n📥 Downloads: 0\n\nStart downloading! 🎵")
+        await m.reply(f"👤 **{m.from_user.first_name}'s Stats:**\n\n📥 Downloads: 0\n\n💡 **Get started:**\n📥 `/download Tum Hi Ho`\n🎮 `/wordle` — Play a quick game!")
         return
     songs = db.get_history(user_id, 50)
     most = max(set(songs), key=songs.count) if songs else "None"
@@ -2023,7 +2054,7 @@ async def mystats(_, m: Message):
 async def mywishlist(_, m: Message):
     items = db.get_wishlist(m.from_user.id)
     if not items:
-        await m.reply("📋 Wishlist empty!\nUse `/wishlist [song]` to add.")
+        await m.reply("📋 **Your wishlist is empty!**\n\n💡 **Save songs for later:**\n`/wishlist Tum Hi Ho`\n`/wishlist Blinding Lights`")
         return
     text = "📋 **Your Wishlist:**\n\n"
     for i, s in enumerate(items, 1):
@@ -2381,6 +2412,7 @@ async def songstats(_, m: Message):
 async def start(_, m: Message):
     user_id = m.from_user.id
     db.ensure_user(user_id, m.from_user.first_name)
+    _bot_raw = BOT_USERNAME.replace("@", "")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎵 Music", callback_data="menu_music_1"),
          InlineKeyboardButton("🌍 Discover", callback_data="menu_discover_1")],
@@ -2389,6 +2421,7 @@ async def start(_, m: Message):
         [InlineKeyboardButton("💬 Chat & More", callback_data="menu_chat_1"),
          InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1")],
         [InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
+        [InlineKeyboardButton("➕ Add BeatNova to Your Group", url=f"https://t.me/{_bot_raw}?startgroup=true")],
     ])
     await m.reply(
         f"🎧 **Welcome to BeatNova!**\n\n"
@@ -2813,6 +2846,7 @@ async def quiz_check(_, m: Message):
 async def send_daily_songs():
     while True:
         now = datetime.datetime.now()
+        # Daily song at 9 AM
         if now.hour == 9 and now.minute == 0:
             subs = db.get_subscribers()
             if subs:
@@ -2827,6 +2861,71 @@ async def send_daily_songs():
                             await send_song(msg_obj, song["name"], msg_obj)
                         except: pass
         await asyncio.sleep(60)
+
+async def send_micro_tips():
+    """Send random micro tips to active users every few hours"""
+    await asyncio.sleep(300)  # Wait 5 min after bot starts
+    while True:
+        try:
+            # Send tip to recently active users (last 10 downloaders)
+            all_users = db.get_all_users()
+            active = [u["user_id"] for u in all_users[:10] if u.get("downloads", 0) > 0]
+            if active:
+                tip = random.choice(MICRO_TIPS)
+                target = random.choice(active)
+                await app.send_message(target, tip)
+        except: pass
+        # Every 4-6 hours randomly
+        await asyncio.sleep(random.randint(14400, 21600))
+
+async def send_hook_challenge():
+    """Send random mini song challenge to active users"""
+    await asyncio.sleep(600)  # Wait 10 min after bot starts
+    while True:
+        try:
+            all_users = db.get_all_users()
+            active = [u["user_id"] for u in all_users[:15] if u.get("downloads", 0) > 2]
+            if active:
+                song_name = random.choice(HOOK_SONGS)
+                # Get lyrics hint
+                lyrics, _ = get_lyrics(song_name)
+                if lyrics:
+                    lines = [l.strip() for l in lyrics.split("\n") if l.strip() and len(l.strip()) > 15]
+                    if lines:
+                        hint_line = random.choice(lines[:10])
+                        target = random.choice(active)
+                        keyboard = InlineKeyboardMarkup([[
+                            InlineKeyboardButton("🎮 Guess Now!", callback_data=f"hook_guess_{song_name[:30]}"),
+                            InlineKeyboardButton("⏭ Skip", callback_data="hook_skip"),
+                        ]])
+                        await app.send_message(
+                            target,
+                            f"🎯 **Mini Challenge!**\n\n"
+                            f"Guess this song from the lyrics 👇\n\n"
+                            f"*\"...{hint_line}...\"*\n\n"
+                            f"Do you know it? 🎵",
+                            reply_markup=keyboard
+                        )
+        except: pass
+        # Every 3-5 hours randomly
+        await asyncio.sleep(random.randint(10800, 18000))
+
+@app.on_callback_query(filters.regex(r"^hook_guess_"))
+async def hook_guess_callback(_, cb):
+    song = cb.data[11:]
+    await cb.answer("Starting guess game!", show_alert=False)
+    msg = await cb.message.reply(f"🎯 **Guess:** Is it `{song}`?\n\nDownload to confirm: `/download {song}`")
+    # Start a guesssong-style mini game
+    await cb.message.reply(
+        f"🎵 **Song Challenge!**\n\n"
+        f"Use `/download {song}` to hear it and find out!\n\n"
+        f"Or type the song name as your answer below 👇"
+    )
+
+@app.on_callback_query(filters.regex(r"^hook_skip$"))
+async def hook_skip_callback(_, cb):
+    await cb.answer("Skipped! Next challenge coming soon 😄", show_alert=True)
+    await cb.message.delete()
 
 # ==================== NEW GAMES ====================
 
@@ -3510,6 +3609,7 @@ def build_menu_text(section, page):
 
 @app.on_callback_query(filters.regex(r"^menu_home$"))
 async def menu_home(_, cb):
+    bot_username_raw = BOT_USERNAME.replace("@", "")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎵 Music", callback_data="menu_music_1"),
          InlineKeyboardButton("🌍 Discover", callback_data="menu_discover_1")],
@@ -3518,6 +3618,7 @@ async def menu_home(_, cb):
         [InlineKeyboardButton("💬 Chat & More", callback_data="menu_chat_1"),
          InlineKeyboardButton("👤 Profile", callback_data="menu_profile_1")],
         [InlineKeyboardButton("📊 Stats", callback_data="menu_stats_1")],
+        [InlineKeyboardButton("➕ Add BeatNova to Your Group", url=f"https://t.me/{bot_username_raw}?startgroup=true")],
     ])
     await cb.message.edit_text(
         "🎧 **BeatNova Menu**\n\n"
@@ -3543,6 +3644,8 @@ async def main():
     db.init_db()
     print(f"✅ {BOT_NAME} started!")
     asyncio.create_task(send_daily_songs())
+    asyncio.create_task(send_micro_tips())
+    asyncio.create_task(send_hook_challenge())
     await asyncio.Event().wait()
 
 app.run(main())
