@@ -1419,6 +1419,47 @@ async def discography(_, m: Message):
     text += "\n📥 `/download [song name]`"
     await msg.edit(text)
 
+# Words that mean a song is a cover/remake — filter from download results
+_COVER_SIGNALS = [
+    "cover", "tribute", "recreat", "remake", "karaoke",
+    "instrumental", "sing along", "sing-along", "lofi", "lo-fi",
+    "slowed", "reverb", "mashup", "remix", "unplugged version",
+]
+
+def _is_valid_result(song):
+    """Filter out covers, remakes, unknown artists, and short clips"""
+    name = song.get("name", "").lower()
+    artist = song.get("primaryArtists", song.get("artist", "")).lower().strip()
+    duration = int(song.get("duration", 0))
+
+    # Remove too-short tracks (under 60 seconds = clip/promo/karaoke intro)
+    if 0 < duration < 60:
+        return False
+
+    # Remove unknown/blank artist
+    if not artist or artist in ("unknown", "various artists", ""):
+        return False
+
+    # Remove obvious covers/remakes by name
+    for sig in _COVER_SIGNALS:
+        if sig in name:
+            return False
+
+    return True
+
+def _dedup_by_artist(results):
+    """Keep only one version per artist — remove true duplicates"""
+    seen = set()
+    out = []
+    for s in results:
+        artist = s.get("primaryArtists", s.get("artist", "")).split(",")[0].strip().lower()
+        name = s.get("name", "").lower()
+        key = f"{name}::{artist}"
+        if key not in seen:
+            seen.add(key)
+            out.append(s)
+    return out
+
 @app.on_message(filters.command("download"))
 async def download(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1427,36 +1468,145 @@ async def download(_, m: Message):
         return
     query = parts[1].strip()
     is_group = m.chat.type.name in ("GROUP", "SUPERGROUP")
+
+    msg = await m.reply(f"🔍 **Searching:** `{query}`...")
+
+    # Fetch multiple results
+    raw_results = await asyncio.to_thread(search_jiosaavn_multiple, query, 15)
+
+    # Filter: remove short clips, unknown artists, obvious covers
+    filtered = [s for s in raw_results if _is_valid_result(s)]
+
+    # Dedup by artist
+    filtered = _dedup_by_artist(filtered)
+
+    # Max 6
+    filtered = filtered[:6]
+
+    if not filtered:
+        # Fallback — use original single result method
+        if is_group:
+            try:
+                dm_msg = await app.send_message(m.from_user.id, f"🔍 **Searching:** `{query}`...")
+                GROUP_ACK = [
+                    f"📩 Sending to your DMs, {m.from_user.first_name}! 🎧",
+                    f"🚀 Check your DMs, {m.from_user.first_name}!",
+                    f"💌 On its way to your inbox, {m.from_user.first_name}!",
+                ]
+                await msg.edit(random.choice(GROUP_ACK))
+                await send_song(dm_msg, query, dm_msg)
+            except Exception as e:
+                if "USER_PRIVACY_RESTRICTED" in str(e):
+                    await msg.edit(f"📩 **Can't DM you!**\n\nStart a chat first: {BOT_USERNAME}\nThen try again!")
+                else:
+                    await send_song(m, query, msg)
+        else:
+            await send_song(m, query, msg)
+        return
+
+    # If only 1 clean result — download directly
+    if len(filtered) == 1:
+        song = filtered[0]
+        song_query = f"{song['name']} {song['primaryArtists'].split(',')[0].strip()}"
+        if is_group:
+            try:
+                dm_msg = await app.send_message(m.from_user.id, f"🔍 **Searching:** `{query}`...")
+                GROUP_ACK = [
+                    f"📩 Sending to your DMs, {m.from_user.first_name}! 🎧",
+                    f"🚀 Check your DMs, {m.from_user.first_name}!",
+                ]
+                await msg.edit(random.choice(GROUP_ACK))
+                await send_song(dm_msg, song_query, dm_msg)
+            except Exception as e:
+                if "USER_PRIVACY_RESTRICTED" in str(e):
+                    await msg.edit(f"📩 **Can't DM you!**\n\nStart a chat first: {BOT_USERNAME}")
+                else:
+                    await send_song(m, song_query, msg)
+        else:
+            await send_song(m, song_query, msg)
+        return
+
+    # Multiple results — show choice buttons
+    num_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
+    text = f"🎵 **Multiple matches for:** `{query}`\n\n"
+    btn_rows = []
+    row = []
+    for i, song in enumerate(filtered):
+        d = int(song.get("duration", 0))
+        dur = f"{d//60}:{d%60:02d}" if d else "?"
+        artist = song.get("primaryArtists", song.get("artist", "Unknown")).split(",")[0].strip()
+        text += f"{num_emojis[i]} **{song['name']}** — {artist} | ⏱ {dur}\n"
+        # callback: pick_{i}_{query encoded}
+        cb_data = f"pick_{i}_{query[:25]}"
+        row.append(InlineKeyboardButton(num_emojis[i], callback_data=cb_data))
+        if len(row) == 3:
+            btn_rows.append(row)
+            row = []
+    if row:
+        btn_rows.append(row)
+    text += "\n👇 Tap to download:"
+
+    # Store results temporarily in memory keyed by user+query
+    _pending_downloads[f"{m.from_user.id}:{query[:25]}"] = {
+        "results": filtered,
+        "is_group": is_group,
+        "user_id": m.from_user.id,
+    }
+
+    await msg.edit(text, reply_markup=InlineKeyboardMarkup(btn_rows))
+
+# Temp store for pending download choices
+_pending_downloads = {}
+
+@app.on_callback_query(filters.regex(r"^pick_\d+_"))
+async def pick_callback(_, cb):
+    parts = cb.data.split("_", 2)
+    idx = int(parts[1])
+    query_key = parts[2] if len(parts) > 2 else ""
+    user_id = cb.from_user.id
+    key = f"{user_id}:{query_key}"
+
+    pending = _pending_downloads.get(key)
+    if not pending:
+        await cb.answer("Session expired! Try /download again.", show_alert=True)
+        return
+
+    songs = pending["results"]
+    is_group = pending["is_group"]
+    if idx >= len(songs):
+        await cb.answer("Invalid choice!", show_alert=True)
+        return
+
+    song = songs[idx]
+    artist = song.get("primaryArtists", song.get("artist", "")).split(",")[0].strip()
+    song_query = f"{song['name']} {artist}"
+
+    await cb.answer(f"Downloading: {song['name']}", show_alert=False)
+
+    # Remove from pending
+    _pending_downloads.pop(key, None)
+
     if is_group:
-        # Send to DM directly — avoid all group restrictions (slowmode, permissions, etc.)
         try:
-            dm_msg = await app.send_message(
-                m.from_user.id,
-                f"🔍 **Searching:** `{query}`..."
-            )
-            # Notify group
+            dm_msg = await app.send_message(user_id, f"🔍 **Searching:** `{song_query}`...")
             GROUP_ACK = [
-                f"📩 Sending to your DMs, {m.from_user.first_name}! 🎧",
-                f"🚀 Check your DMs, {m.from_user.first_name}!",
-                f"💌 On its way to your inbox, {m.from_user.first_name}!",
+                f"📩 Sending to your DMs, {cb.from_user.first_name}! 🎧",
+                f"🚀 Check your DMs, {cb.from_user.first_name}!",
+                f"💌 On its way to your inbox, {cb.from_user.first_name}!",
             ]
-            await m.reply(random.choice(GROUP_ACK))
-            # Create a fake message-like object with DM chat id for send_song
-            await send_song(dm_msg, query, dm_msg)
+            try:
+                await cb.message.edit(random.choice(GROUP_ACK))
+            except: pass
+            await send_song(dm_msg, song_query, dm_msg)
         except Exception as e:
-            if "USER_PRIVACY_RESTRICTED" in str(e) or "user is bot" in str(e).lower():
-                await m.reply(
-                    f"📩 **Can't DM you!**\n\n"
-                    f"Please start a chat with me first: {BOT_USERNAME}\n"
-                    f"Then try `/download {query}` again!"
-                )
+            if "USER_PRIVACY_RESTRICTED" in str(e):
+                await cb.message.reply(f"📩 **Can't DM you!**\n\nStart a chat first: {BOT_USERNAME}")
             else:
-                # Fallback — try in group anyway
-                msg = await m.reply(f"🔍 **Searching:** `{query}`...")
-                await send_song(m, query, msg)
+                msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
+                await send_song(cb.message, song_query, msg2)
     else:
-        msg = await m.reply(f"🔍 **Searching:** `{query}`...")
-        await send_song(m, query, msg)
+        msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
+        await send_song(cb.message, song_query, msg2)
 
 @app.on_message(filters.command("duet"))
 async def duet(_, m: Message):
