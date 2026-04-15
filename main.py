@@ -357,6 +357,14 @@ async def send_song(m, query, msg, quality="320"):
         await msg.edit("❌ Song not found! Try a different name.")
         return
 
+    # Reject clips/promos under 90 seconds
+    if duration and 0 < duration < 90:
+        await msg.edit(
+            f"⚠️ Found only a short clip ({duration}s) for `{query}`.\n\n"
+            f"Try being more specific:\n`/download {query} full song`"
+        )
+        return
+
     mins, secs = duration // 60, duration % 60
     user_id = m.from_user.id
     is_first = db.get_user(user_id) is None or db.get_user(user_id)["downloads"] == 0
@@ -1420,45 +1428,63 @@ async def discography(_, m: Message):
     await msg.edit(text)
 
 # Words that mean a song is a cover/remake — filter from download results
-_COVER_SIGNALS = [
+_COVER_SIGNALS_NAME = [
     "cover", "tribute", "recreat", "remake", "karaoke",
     "instrumental", "sing along", "sing-along", "lofi", "lo-fi",
-    "slowed", "reverb", "mashup", "remix", "unplugged version",
+    "slowed", "reverb", "unplugged version", "backing track",
+    # Mashup/crossover patterns
+    " x ", " X ", " vs ", " vs. ",
+    "mashup", "medley", "jukebox",
+    # Version tags
+    "trending version", "viral version", "reels version",
+    "short version", "clip version", "promo",
+]
+
+_COVER_SIGNALS_ARTIST = [
+    "afusic", "anukriti", "karaoke", "sing along",
+    "recreated", "tribute", "cover", "unplugged",
 ]
 
 def _is_valid_result(song):
-    """Filter out covers, remakes, unknown artists, and short clips"""
+    """Filter: remove short clips, unknown artists, covers, mashups, wrong versions"""
     name = song.get("name", "").lower()
     artist = song.get("primaryArtists", song.get("artist", "")).lower().strip()
     duration = int(song.get("duration", 0))
 
-    # Remove too-short tracks (under 60 seconds = clip/promo/karaoke intro)
-    if 0 < duration < 60:
+    # Remove too-short tracks — under 90s is almost always a clip/promo/intro
+    if 0 < duration < 90:
         return False
 
     # Remove unknown/blank artist
     if not artist or artist in ("unknown", "various artists", ""):
         return False
 
-    # Remove obvious covers/remakes by name
-    for sig in _COVER_SIGNALS:
+    # Remove if name has cover/mashup/version signals
+    for sig in _COVER_SIGNALS_NAME:
         if sig in name:
             return False
+
+    # Remove known cover/tribute artists
+    for sig in _COVER_SIGNALS_ARTIST:
+        if sig in artist:
+            return False
+
+    # Remove remix patterns: "Song Name - Remix", "Song (DJ Mix)"
+    import re as _re
+    if _re.search(r'[\(\[](remix|mix|edit|dj|remaster|remastered|version|ver\.)[\)\]]', name):
+        return False
 
     return True
 
 def _dedup_by_artist(results):
-    """Keep only one version per artist — remove true duplicates"""
-    seen = set()
-    out = []
+    """One result per artist — if same artist appears multiple times keep longest"""
+    artist_best = {}
     for s in results:
         artist = s.get("primaryArtists", s.get("artist", "")).split(",")[0].strip().lower()
-        name = s.get("name", "").lower()
-        key = f"{name}::{artist}"
-        if key not in seen:
-            seen.add(key)
-            out.append(s)
-    return out
+        duration = int(s.get("duration", 0))
+        if artist not in artist_best or duration > int(artist_best[artist].get("duration", 0)):
+            artist_best[artist] = s
+    return list(artist_best.values())
 
 @app.on_message(filters.command("download"))
 async def download(_, m: Message):
