@@ -351,7 +351,7 @@ def download_song_file(url, title):
                 raise Exception(f"Download failed after 3 tries: {e}")
     return path
 
-async def send_song(m, query, msg, quality="320"):
+async def send_song(m, query, msg, quality="320", _user_id=None):
     dl_url, title, duration, song_data = await asyncio.to_thread(search_jiosaavn_quality, query, quality)
     if not dl_url:
         await msg.edit("❌ Song not found! Try a different name.")
@@ -366,7 +366,11 @@ async def send_song(m, query, msg, quality="320"):
         return
 
     mins, secs = duration // 60, duration % 60
-    user_id = m.from_user.id
+    # Use passed user_id (for group→DM flow) or fallback to m.from_user.id
+    user_id = _user_id or (m.from_user.id if m.from_user else None)
+    if not user_id:
+        await msg.edit("❌ Could not identify user. Please try again.")
+        return
     is_first = db.get_user(user_id) is None or db.get_user(user_id)["downloads"] == 0
 
     # Step 1: Show cool loading messages
@@ -1623,16 +1627,30 @@ async def pick_callback(_, cb):
             try:
                 await cb.message.edit(random.choice(GROUP_ACK))
             except: pass
-            await send_song(dm_msg, song_query, dm_msg)
+            # Pass user_id explicitly — dm_msg.from_user is None (bot sent it)
+            await send_song(dm_msg, song_query, dm_msg, _user_id=user_id)
         except Exception as e:
-            if "USER_PRIVACY_RESTRICTED" in str(e):
-                await cb.message.reply(f"📩 **Can't DM you!**\n\nStart a chat first: {BOT_USERNAME}")
+            err_str = str(e)
+            if "USER_PRIVACY_RESTRICTED" in err_str:
+                try:
+                    await cb.message.reply(f"📩 **Can't DM you!**\n\nStart a chat with me first: {BOT_USERNAME}")
+                except: pass
+            elif "SLOWMODE_WAIT" in err_str:
+                # Group has slowmode — send only DM, skip group reply
+                try:
+                    await app.send_message(user_id, f"⚠️ Group slowmode active. Song sent here: `/download {song_query}`")
+                except: pass
             else:
-                msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
-                await send_song(cb.message, song_query, msg2)
+                # Fallback: try replying in group (may also fail if slowmode)
+                try:
+                    msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
+                    await send_song(cb.message, song_query, msg2, _user_id=user_id)
+                except Exception as e2:
+                    if "SLOWMODE_WAIT" not in str(e2):
+                        print(f"[pick_callback fallback] {e2}")
     else:
         msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
-        await send_song(cb.message, song_query, msg2)
+        await send_song(cb.message, song_query, msg2, _user_id=user_id)
 
 @app.on_message(filters.command("duet"))
 async def duet(_, m: Message):
