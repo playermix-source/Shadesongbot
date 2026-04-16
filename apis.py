@@ -596,16 +596,25 @@ def search_song_download(query, quality="320"):
     """Get best downloadable song — full quality"""
     # 1. Try JioSaavn first (fastest, 320kbps)
     song = _saavn_quality(query, quality)
+
+    # Reject if JioSaavn returned a short clip (under 90s = promo/intro/wrong result)
+    if song and int(song.get("duration", 0)) >= 90:
+        return song
+
+    if song:
+        print(f"[search_song_download] JioSaavn clip too short ({song.get('duration')}s) for: {query} — trying yt-dlp")
+
+    # 2. Fallback: YouTube Music via yt-dlp (finds EVERYTHING, including niche artists)
+    print(f"[yt-dlp] Trying YouTube Music for: {query}")
+    yt_song = _ytdlp_search_download(query)
+    if yt_song and int(yt_song.get("duration", 0)) >= 90:
+        return yt_song
+
+    # 3. If yt-dlp also short/failed, return JioSaavn result if we had one
     if song:
         return song
 
-    # 2. Fallback: YouTube Music via yt-dlp (finds EVERYTHING)
-    print(f"[yt-dlp] JioSaavn failed, trying YouTube Music for: {query}")
-    yt_song = _ytdlp_search_download(query)
-    if yt_song:
-        return yt_song
-
-    # 3. Last resort: Deezer/iTunes 30sec preview
+    # 4. Last resort: Deezer/iTunes 30sec preview
     deezer = _deezer_search(query, 5)
     if deezer:
         best = _find_best_match(deezer, query)
