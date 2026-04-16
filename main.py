@@ -351,7 +351,7 @@ def download_song_file(url, title):
                 raise Exception(f"Download failed after 3 tries: {e}")
     return path
 
-async def send_song(m, query, msg, quality="320", _user_id=None):
+async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=None):
     dl_url, title, duration, song_data = await asyncio.to_thread(search_jiosaavn_quality, query, quality)
     if not dl_url:
         await msg.edit("❌ Song not found! Try a different name.")
@@ -366,11 +366,14 @@ async def send_song(m, query, msg, quality="320", _user_id=None):
         return
 
     mins, secs = duration // 60, duration % 60
-    # Use passed user_id (for group→DM flow) or fallback to m.from_user.id
+
+    # Safely resolve user_id and first_name — m.from_user is None in bot-sent DM messages
     user_id = _user_id or (m.from_user.id if m.from_user else None)
+    first_name = _first_name or (m.from_user.first_name if m.from_user else "User")
     if not user_id:
         await msg.edit("❌ Could not identify user. Please try again.")
         return
+
     is_first = db.get_user(user_id) is None or db.get_user(user_id)["downloads"] == 0
 
     # Step 1: Show cool loading messages
@@ -409,11 +412,11 @@ async def send_song(m, query, msg, quality="320", _user_id=None):
     update_today_stats()
     today_downloads["count"] += 1
     db.increment_bot_stat("total_downloads")
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, first_name)
     db.update_streak(user_id)
     db.increment_downloads(user_id)
     db.add_history(user_id, title)
-    db.save_last_downloaded(user_id, title, f"{mins}:{secs:02d}", m.from_user.first_name)
+    db.save_last_downloaded(user_id, title, f"{mins}:{secs:02d}", first_name)
     db.increment_song_downloads(title)
 
     # XP system
@@ -421,9 +424,11 @@ async def send_song(m, query, msg, quality="320", _user_id=None):
     if is_first: xp_earned += XP_REWARDS["first_download"]
     total_xp, new_level = db.add_xp(user_id, xp_earned)
 
-    # Group stats
-    if m.chat.type.name in ("GROUP", "SUPERGROUP"):
-        db.update_group_stats(m.chat.id, user_id, m.from_user.first_name)
+    # Group stats — only when m.chat is a real group message (not a bot-sent DM)
+    try:
+        if m.chat and m.chat.type.name in ("GROUP", "SUPERGROUP"):
+            db.update_group_stats(m.chat.id, user_id, first_name)
+    except: pass
 
     if song_data:
         album_raw = song_data.get("album", "Unknown")
@@ -446,7 +451,10 @@ async def send_song(m, query, msg, quality="320", _user_id=None):
         await msg.edit(f"**{loading_seq[2]}**")
     except: pass
 
-    is_group = m.chat.type.name in ("GROUP", "SUPERGROUP")
+    is_group = False
+    try:
+        is_group = m.chat.type.name in ("GROUP", "SUPERGROUP")
+    except: pass
 
     # Split title into song name and artist for Telegram display
     song_name = song_data.get("name", title) if song_data else title
@@ -462,7 +470,7 @@ async def send_song(m, query, msg, quality="320", _user_id=None):
             caption=(f"🎵 **{title}**\n"
                      f"💿 {album} | 📅 {year}\n"
                      f"⏱ {mins}:{secs:02d} | 🎧 {quality}kbps\n"
-                     f"👤 {m.from_user.first_name}\n"
+                     f"👤 {first_name}\n"
                      f"━━━━━━━━━━━━━━━\n"
                      f"🎧 Powered by BeatNova"),
             title=song_name,
@@ -478,7 +486,7 @@ async def send_song(m, query, msg, quality="320", _user_id=None):
             "403", "Forbidden", "USER_BANNED", "CHAT_RESTRICTED",
             "RIGHT", "permission", "flood", "slow"
         ])
-        if should_dm or m.chat.type.name in ("GROUP", "SUPERGROUP"):
+        if should_dm or is_group:
             DM_CAPTIONS = [
                 "🎵 Slid into your DMs with the goods 😎",
                 "📩 Group was being difficult, so here you go! 🎧",
@@ -490,12 +498,12 @@ async def send_song(m, query, msg, quality="320", _user_id=None):
             GROUP_MSGS = [
                 f"✅ **{title}** — sent to your PM! 📩",
                 f"🎵 **{title}** — check your DMs! 😎",
-                f"📩 Dropped it in your DMs, {m.from_user.first_name}!",
+                f"📩 Dropped it in your DMs, {first_name}!",
                 f"🚀 **{title}** is in your inbox! Check DMs 👆",
             ]
             try:
                 await app.send_audio(
-                    m.from_user.id, path,
+                    user_id, path,
                     caption=(f"🎵 **{title}**\n"
                              f"💿 {album} | 📅 {year}\n"
                              f"⏱ {mins}:{secs:02d} | 🎧 {quality}kbps\n\n"
@@ -542,9 +550,11 @@ async def send_song(m, query, msg, quality="320", _user_id=None):
     if is_first:
         xp_msg = (f"🎉 **First Download!** +{xp_earned} XP 🌟\n"
                   f"🏅 Badge: **Music Explorer**{streak_bonus}")
-        await m.reply(xp_msg)
+        try: await m.reply(xp_msg)
+        except: pass
     elif not is_group:
-        await m.reply(f"✨ +{xp_earned} XP{streak_bonus} | {get_xp_bar(total_xp)} Lv.{new_level}")
+        try: await m.reply(f"✨ +{xp_earned} XP{streak_bonus} | {get_xp_bar(total_xp)} Lv.{new_level}")
+        except: pass
 
     # Auto-suggest similar songs
     try:
@@ -1498,8 +1508,24 @@ async def download(_, m: Message):
         return
     query = parts[1].strip()
     is_group = m.chat.type.name in ("GROUP", "SUPERGROUP")
+    first_name = m.from_user.first_name if m.from_user else "User"
+    user_id = m.from_user.id if m.from_user else None
 
-    msg = await m.reply(f"🔍 **Searching:** `{query}`...")
+    # In group with slowmode: skip the "Searching..." reply in group, go straight to DM
+    try:
+        msg = await m.reply(f"🔍 **Searching:** `{query}`...")
+    except Exception as e:
+        if "SLOWMODE_WAIT" in str(e) and is_group and user_id:
+            # Can't reply in group due to slowmode — send directly to DM
+            try:
+                dm_msg = await app.send_message(user_id, f"🔍 **Searching:** `{query}`...")
+                await send_song(dm_msg, query, dm_msg, _user_id=user_id, _first_name=first_name)
+            except Exception as dm_e:
+                if "USER_PRIVACY_RESTRICTED" in str(dm_e):
+                    pass  # Can't DM either, silently fail
+            return
+        else:
+            return  # Unknown error, give up
 
     # Fetch multiple results
     raw_results = await asyncio.to_thread(search_jiosaavn_multiple, query, 15)
@@ -1517,19 +1543,28 @@ async def download(_, m: Message):
         # Fallback — use original single result method
         if is_group:
             try:
-                dm_msg = await app.send_message(m.from_user.id, f"🔍 **Searching:** `{query}`...")
+                dm_msg = await app.send_message(user_id, f"🔍 **Searching:** `{query}`...")
                 GROUP_ACK = [
-                    f"📩 Sending to your DMs, {m.from_user.first_name}! 🎧",
-                    f"🚀 Check your DMs, {m.from_user.first_name}!",
-                    f"💌 On its way to your inbox, {m.from_user.first_name}!",
+                    f"📩 Sending to your DMs, {first_name}! 🎧",
+                    f"🚀 Check your DMs, {first_name}!",
+                    f"💌 On its way to your inbox, {first_name}!",
                 ]
-                await msg.edit(random.choice(GROUP_ACK))
-                await send_song(dm_msg, query, dm_msg)
+                try:
+                    await msg.edit(random.choice(GROUP_ACK))
+                except: pass
+                await send_song(dm_msg, query, dm_msg, _user_id=user_id, _first_name=first_name)
             except Exception as e:
                 if "USER_PRIVACY_RESTRICTED" in str(e):
-                    await msg.edit(f"📩 **Can't DM you!**\n\nStart a chat first: {BOT_USERNAME}\nThen try again!")
+                    try:
+                        await msg.edit(f"📩 **Can't DM you!**\n\nStart a chat first: {BOT_USERNAME}\nThen try again!")
+                    except: pass
+                elif "SLOWMODE_WAIT" in str(e):
+                    # Group has slowmode on DM send too? Very rare but handle
+                    try:
+                        await send_song(dm_msg, query, dm_msg, _user_id=user_id, _first_name=first_name)
+                    except: pass
                 else:
-                    await send_song(m, query, msg)
+                    await send_song(m, query, msg, _user_id=user_id, _first_name=first_name)
         else:
             await send_song(m, query, msg)
         return
@@ -1540,18 +1575,24 @@ async def download(_, m: Message):
         song_query = f"{song['name']} {song['primaryArtists'].split(',')[0].strip()}"
         if is_group:
             try:
-                dm_msg = await app.send_message(m.from_user.id, f"🔍 **Searching:** `{query}`...")
+                dm_msg = await app.send_message(user_id, f"🔍 **Searching:** `{song_query}`...")
                 GROUP_ACK = [
-                    f"📩 Sending to your DMs, {m.from_user.first_name}! 🎧",
-                    f"🚀 Check your DMs, {m.from_user.first_name}!",
+                    f"📩 Sending to your DMs, {first_name}! 🎧",
+                    f"🚀 Check your DMs, {first_name}!",
                 ]
-                await msg.edit(random.choice(GROUP_ACK))
-                await send_song(dm_msg, song_query, dm_msg)
+                try:
+                    await msg.edit(random.choice(GROUP_ACK))
+                except: pass
+                await send_song(dm_msg, song_query, dm_msg, _user_id=user_id, _first_name=first_name)
             except Exception as e:
                 if "USER_PRIVACY_RESTRICTED" in str(e):
-                    await msg.edit(f"📩 **Can't DM you!**\n\nStart a chat first: {BOT_USERNAME}")
+                    try:
+                        await msg.edit(f"📩 **Can't DM you!**\n\nStart a chat first: {BOT_USERNAME}")
+                    except: pass
+                elif "SLOWMODE_WAIT" in str(e):
+                    pass  # Group slowmode — can't send DM init msg, ignore
                 else:
-                    await send_song(m, song_query, msg)
+                    await send_song(m, song_query, msg, _user_id=user_id, _first_name=first_name)
         else:
             await send_song(m, song_query, msg)
         return
@@ -1577,13 +1618,21 @@ async def download(_, m: Message):
     text += "\n👇 Tap to download:"
 
     # Store results temporarily in memory keyed by user+query
-    _pending_downloads[f"{m.from_user.id}:{query[:25]}"] = {
+    _pending_downloads[f"{user_id}:{query[:25]}"] = {
         "results": filtered,
         "is_group": is_group,
-        "user_id": m.from_user.id,
+        "user_id": user_id,
+        "first_name": first_name,
     }
 
-    await msg.edit(text, reply_markup=InlineKeyboardMarkup(btn_rows))
+    try:
+        await msg.edit(text, reply_markup=InlineKeyboardMarkup(btn_rows))
+    except Exception as e:
+        if "SLOWMODE_WAIT" in str(e):
+            # Group slowmode hit on edit — try sending fresh message to DM
+            try:
+                dm_msg = await app.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(btn_rows))
+            except: pass
 
 # Temp store for pending download choices
 _pending_downloads = {}
@@ -1594,6 +1643,7 @@ async def pick_callback(_, cb):
     idx = int(parts[1])
     query_key = parts[2] if len(parts) > 2 else ""
     user_id = cb.from_user.id
+    first_name = cb.from_user.first_name
     key = f"{user_id}:{query_key}"
 
     pending = _pending_downloads.get(key)
@@ -1620,15 +1670,14 @@ async def pick_callback(_, cb):
         try:
             dm_msg = await app.send_message(user_id, f"🔍 **Searching:** `{song_query}`...")
             GROUP_ACK = [
-                f"📩 Sending to your DMs, {cb.from_user.first_name}! 🎧",
-                f"🚀 Check your DMs, {cb.from_user.first_name}!",
-                f"💌 On its way to your inbox, {cb.from_user.first_name}!",
+                f"📩 Sending to your DMs, {first_name}! 🎧",
+                f"🚀 Check your DMs, {first_name}!",
+                f"💌 On its way to your inbox, {first_name}!",
             ]
             try:
                 await cb.message.edit(random.choice(GROUP_ACK))
             except: pass
-            # Pass user_id explicitly — dm_msg.from_user is None (bot sent it)
-            await send_song(dm_msg, song_query, dm_msg, _user_id=user_id)
+            await send_song(dm_msg, song_query, dm_msg, _user_id=user_id, _first_name=first_name)
         except Exception as e:
             err_str = str(e)
             if "USER_PRIVACY_RESTRICTED" in err_str:
@@ -1636,21 +1685,24 @@ async def pick_callback(_, cb):
                     await cb.message.reply(f"📩 **Can't DM you!**\n\nStart a chat with me first: {BOT_USERNAME}")
                 except: pass
             elif "SLOWMODE_WAIT" in err_str:
-                # Group has slowmode — send only DM, skip group reply
+                # Group has slowmode — just notify user
                 try:
-                    await app.send_message(user_id, f"⚠️ Group slowmode active. Song sent here: `/download {song_query}`")
+                    await app.send_message(user_id, f"⚠️ Group slowmode active. Use `/download {song_query}` here in DM!")
                 except: pass
             else:
-                # Fallback: try replying in group (may also fail if slowmode)
+                # Fallback: try replying in group
                 try:
                     msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
-                    await send_song(cb.message, song_query, msg2, _user_id=user_id)
+                    await send_song(cb.message, song_query, msg2, _user_id=user_id, _first_name=first_name)
                 except Exception as e2:
                     if "SLOWMODE_WAIT" not in str(e2):
                         print(f"[pick_callback fallback] {e2}")
     else:
-        msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
-        await send_song(cb.message, song_query, msg2, _user_id=user_id)
+        try:
+            msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
+            await send_song(cb.message, song_query, msg2, _user_id=user_id, _first_name=first_name)
+        except Exception as e:
+            print(f"[pick_callback private] {e}")
 
 @app.on_message(filters.command("duet"))
 async def duet(_, m: Message):
