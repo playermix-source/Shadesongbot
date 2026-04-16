@@ -1,7 +1,8 @@
 import sqlite3
 import datetime
 
-DB_PATH = "beatnova.db"
+import os
+DB_PATH = os.path.join(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/app"), "beatnova.db")
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
