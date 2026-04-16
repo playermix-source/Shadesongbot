@@ -420,17 +420,138 @@ def detect_language(query):
     hindi_chars = set("अआइईउऊएऐओऔकखगघचछजझटठडढणतथदधनपफबभमयरलवशषसह")
     if any(c in hindi_chars for c in query):
         return "hindi"
-    hindi_words = {"tum", "dil", "pyar", "ishq", "tera", "mera", "yaar", "aaj", "kal",
-                   "raat", "din", "phir", "kuch", "main", "hum", "hai", "ho", "kar",
-                   "mere", "teri", "mohabbat", "zindagi", "duniya", "woh", "aur",
-                   "mujhe", "tujhe", "koi", "nahi", "bhi", "kya", "kyun", "ab",
-                   "aa", "ja", "le", "de", "sun", "bol", "chal", "reh", "jaa"}
+    hindi_words = {
+        # Common Hindi words
+        "tum", "dil", "pyar", "ishq", "tera", "mera", "yaar", "aaj", "kal",
+        "raat", "din", "phir", "kuch", "main", "hum", "hai", "ho", "kar",
+        "mere", "teri", "mohabbat", "zindagi", "duniya", "woh", "aur",
+        "mujhe", "tujhe", "koi", "nahi", "bhi", "kya", "kyun", "ab",
+        "aa", "ja", "le", "de", "sun", "bol", "chal", "reh", "jaa",
+        # More common Hindi song words
+        "pal", "naina", "sajna", "sajana", "saath", "mann", "dard", "yaad",
+        "judaa", "wafa", "bewafa", "intezaar", "tanha", "akela", "dono",
+        "piya", "sajan", "mehboob", "jaana", "jaane", "aana", "aane",
+        "peene", "pine", "pee", "shraab", "daaru", "nashaa",
+        "chain", "sukoon", "khushi", "gham", "aansu", "hasna", "rona",
+        "zara", "thoda", "bahut", "bohot", "kaafi", "bilkul",
+        "ek", "do", "teen", "char", "paanch",
+        "jaan", "dost", "bhai", "yaar", "saathi",
+        "dheere", "धीरे", "nazar", "aankhein", "aankhon", "baahon",
+        "o", "oh", "oo", "re", "ri",
+        # Common Bollywood/Punjabi song title words
+        "lambiyan", "raataan", "kesariya", "shayad", "hawayein",
+        "channa", "tujhse", "tumse", "humse", "unse",
+        "lag", "lage", "lagi", "lagta", "lagti",
+        "chhod", "chhodu", "chodna",
+        "milna", "milenge", "mile", "milo",
+        "baat", "baatein", "bolo", "batao",
+        "hua", "hui", "hue", "hona", "hogi", "hoga",
+        # Popular artist names that are Indian
+        "arijit", "atif", "jubin", "darshan", "armaan", "shreya",
+        "talwiinder", "talwinder", "b praak", "praak", "Jordan",
+        "imran", "rahat", "sonu", "kumar", "udit", "lata", "asha",
+        "kishore", "rafi", "mukesh", "hemant", "manna",
+        "badshah", "honey", "diljit", "ap dhillon", "karan",
+        "neha", "guru", "harshdeep", "sunidhi", "kavita",
+    }
     q_words = set(query.lower().split())
     if q_words & hindi_words:
+        return "hindi"
+    # Also check if any word is a substring of known Hindi patterns
+    q_lower = query.lower()
+    hindi_substrings = ["peene", "pilao", "pila", "naino", "naina", "sajna", "dilbar"]
+    if any(s in q_lower for s in hindi_substrings):
         return "hindi"
     return "international"
 
 # ==================== UNIFIED SEARCH ====================
+
+def _score_all(results, query):
+    """Score and sort all results by best match — used for options list display"""
+    if not results:
+        return results
+    query_clean = query.lower().strip()
+    for prefix in ["download ", "song ", "full song ", "audio "]:
+        query_clean = query_clean.replace(prefix, "")
+    query_words = set(query_clean.split())
+
+    # Detect artist words
+    all_artist_words = set()
+    for song in results:
+        artist_str = song.get("primaryArtists", song.get("artist", "")).lower()
+        for part in artist_str.split(","):
+            for w in part.strip().split():
+                if len(w) > 2:
+                    all_artist_words.add(re.sub(r'[^a-z0-9]', '', w))
+
+    artist_query_words = set()
+    for w in query_words:
+        w_clean = re.sub(r'[^a-z0-9]', '', w)
+        if w_clean in all_artist_words:
+            artist_query_words.add(w)
+
+    song_title_words = query_words - artist_query_words
+
+    scored = []
+    for song in results:
+        name = song.get("name", "").lower().strip()
+        artist = song.get("primaryArtists", song.get("artist", "")).lower()
+        name_words = set(name.split())
+        score = 0
+
+        # Exact name match
+        if name == query_clean or (song_title_words and name == " ".join(sorted(song_title_words))):
+            score += 100
+
+        # Word match
+        ref_words = song_title_words if artist_query_words else query_words
+        matched = ref_words & name_words
+        score += len(matched) * 10
+
+        # Penalize penalty words
+        extra = name_words - query_words
+        for word in extra:
+            word_clean = re.sub(r'[^a-z0-9]', '', word)
+            if word_clean in [re.sub(r'[^a-z0-9]', '', p) for p in PENALTY_WORDS]:
+                score -= 20
+
+        # Extra heavy penalty for "2.0", "3.0" etc version numbers
+        if re.search(r'\b\d+\.\d+\b', name) and not re.search(r'\b\d+\.\d+\b', query_clean):
+            score -= 40
+
+        # Penalize year in name
+        if not re.search(r'\b(19|20)\d{2}\b', query_clean):
+            if re.search(r'\b(19|20)\d{2}\b', name):
+                score -= 10
+
+        # Artist match bonus
+        artist_words_song = set(re.sub(r'[^a-z0-9 ]', '', artist.split(",")[0].strip()).split())
+        if artist_query_words:
+            artist_q_clean = set(re.sub(r'[^a-z0-9]', '', w) for w in artist_query_words)
+            artist_s_clean = set(re.sub(r'[^a-z0-9]', '', w) for w in artist_words_song)
+            if artist_q_clean & artist_s_clean:
+                score += 30
+        else:
+            if artist_words_song & query_words:
+                score += 5
+
+        # Shorter name bonus
+        name_extra_len = len(name) - len(" ".join(ref_words))
+        if name_extra_len > 10:
+            score -= min(name_extra_len // 5, 10)
+
+        # Prefer longer duration (avoid clips) — songs under 90s get penalized
+        duration = int(song.get("duration", 0))
+        if 0 < duration < 90:
+            score -= 50
+        elif duration > 150:
+            score += 3
+
+        scored.append((score, song))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [s for _, s in scored]
+
 
 def search_songs(query, limit=10):
     """Smart multi-API search with best match sorting"""
@@ -443,28 +564,31 @@ def search_songs(query, limit=10):
             results = _saavn_old(query, limit)
         if not results:
             results = _deezer_search(query, limit)
-        # yt-dlp fallback if still empty
         if not results:
             print(f"[search_songs] All APIs failed, trying yt-dlp for: {query}")
             results = _ytdlp_search_multiple(query, limit)
     else:
-        results = _deezer_search(query, limit)
-        if len(results) < 3:
-            results = results + _itunes_search(query, limit)
-        if len(results) < 5:
-            saavn = _saavn_dev(query, 5) or _saavn_old(query, 5)
-            results = results + saavn
-        # yt-dlp fallback if still not enough
+        # For international, also try JioSaavn — many Indian songs have English titles
+        saavn = _saavn_dev(query, limit) or _saavn_old(query, limit)
+        deezer = _deezer_search(query, limit)
+        itunes = _itunes_search(query, limit) if len(deezer) < 3 else []
+        results = saavn + deezer + itunes
+
+        # Deduplicate by name
+        seen, deduped = set(), []
+        for r in results:
+            key = r.get("name", "").lower().strip()
+            if key and key not in seen:
+                seen.add(key)
+                deduped.append(r)
+        results = deduped
+
         if len(results) < 3:
             print(f"[search_songs] Too few results, adding yt-dlp for: {query}")
             results = results + _ytdlp_search_multiple(query, limit)
 
-    # Sort — best match first
-    if results:
-        best = _find_best_match(results, query)
-        if best and best in results:
-            results.remove(best)
-            results.insert(0, best)
+    # Sort ALL results by score — best first
+    results = _score_all(results, query)
 
     return results[:limit]
 
