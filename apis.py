@@ -29,7 +29,8 @@ PENALTY_WORDS = [
 
 def _find_best_match(results, query):
     """
-    Smart best match — finds exact or closest song, avoids unwanted versions
+    Smart best match — finds exact or closest song, avoids unwanted versions.
+    Handles artist name in query (e.g. "pal pal talwiinder" or "mujhe peene do darshan raval").
     """
     if not results:
         return None
@@ -42,6 +43,25 @@ def _find_best_match(results, query):
         query_clean = query_clean.replace(prefix, "")
     query_words = set(query_clean.split())
 
+    # Build a list of all artist names from results for artist-word detection
+    all_artist_words = set()
+    for song in results:
+        artist_str = song.get("primaryArtists", song.get("artist", "")).lower()
+        for part in artist_str.split(","):
+            for w in part.strip().split():
+                if len(w) > 2:
+                    all_artist_words.add(re.sub(r'[^a-z0-9]', '', w))
+
+    # Detect which query words are likely artist names (present in some result's artist field)
+    artist_query_words = set()
+    for w in query_words:
+        w_clean = re.sub(r'[^a-z0-9]', '', w)
+        if w_clean in all_artist_words:
+            artist_query_words.add(w)
+
+    # Song title words = query minus detected artist words
+    song_title_words = query_words - artist_query_words
+
     scored = []
     for song in results:
         name = song.get("name", "").lower().strip()
@@ -49,12 +69,15 @@ def _find_best_match(results, query):
         name_words = set(name.split())
         score = 0
 
-        # 1. Exact name match = perfect score
-        if name == query_clean:
-            return song
+        # 1. Exact name match (on song title portion)
+        if name == query_clean or name == " ".join(song_title_words):
+            score += 100
 
-        # 2. Word match score
-        matched = query_words & name_words
+        # 2. Word match score — match against song title words if we detected artist words
+        if artist_query_words:
+            matched = song_title_words & name_words
+        else:
+            matched = query_words & name_words
         score += len(matched) * 10
 
         # 3. Penalize extra words not in query
@@ -69,18 +92,26 @@ def _find_best_match(results, query):
             if re.search(r'\b(19|20)\d{2}\b', name):
                 score -= 10
 
-        # 5. Bonus if name starts with query words
-        first_word = query_clean.split()[0] if query_clean.split() else ""
-        if name.startswith(first_word):
+        # 5. Bonus if name starts with first song-title query word
+        title_first = list(song_title_words)[0] if song_title_words else (query_clean.split()[0] if query_clean.split() else "")
+        if name.startswith(title_first):
             score += 8
 
-        # 6. Bonus if artist name matches query
-        artist_words = set(artist.split(",")[0].strip().split())
-        if artist_words & query_words:
-            score += 5
+        # 6. Strong bonus if artist name matches the artist portion of query
+        artist_words_song = set(re.sub(r'[^a-z0-9 ]', '', artist.split(",")[0].strip()).split())
+        if artist_query_words:
+            # User typed artist name — give HIGH bonus for exact artist match
+            artist_q_clean = set(re.sub(r'[^a-z0-9]', '', w) for w in artist_query_words)
+            artist_s_clean = set(re.sub(r'[^a-z0-9]', '', w) for w in artist_words_song)
+            if artist_q_clean & artist_s_clean:
+                score += 30  # Strong artist match bonus
+        else:
+            if artist_words_song & query_words:
+                score += 5
 
         # 7. Shorter name = closer to original (penalize long additions)
-        name_extra_len = len(name) - len(query_clean)
+        ref_words = song_title_words if song_title_words else query_words
+        name_extra_len = len(name) - len(" ".join(ref_words))
         if name_extra_len > 10:
             score -= min(name_extra_len // 5, 10)
 
