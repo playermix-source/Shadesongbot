@@ -597,22 +597,29 @@ def search_song_download(query, quality="320"):
     # 1. Try JioSaavn first (fastest, 320kbps)
     song = _saavn_quality(query, quality)
 
-    # Reject if JioSaavn returned a short clip (under 90s = promo/intro/wrong result)
+    # Only use JioSaavn result if it's a proper full song (>= 90s)
     if song and int(song.get("duration", 0)) >= 90:
+        print(f"[saavn] ✅ Full song found: {song.get('name')} ({song.get('duration')}s)")
         return song
 
     if song:
-        print(f"[search_song_download] JioSaavn clip too short ({song.get('duration')}s) for: {query} — trying yt-dlp")
+        print(f"[saavn] ⚠️ Short clip ({song.get('duration')}s) for: {query} — trying yt-dlp")
+    else:
+        print(f"[saavn] ❌ Not found: {query} — trying yt-dlp")
 
-    # 2. Fallback: YouTube Music via yt-dlp (finds EVERYTHING, including niche artists)
-    print(f"[yt-dlp] Trying YouTube Music for: {query}")
+    # 2. Fallback: YouTube Music via yt-dlp — finds rare/regional/niche songs
     yt_song = _ytdlp_search_download(query)
     if yt_song and int(yt_song.get("duration", 0)) >= 90:
+        print(f"[yt-dlp] ✅ Found: {yt_song.get('name')} ({yt_song.get('duration')}s)")
         return yt_song
 
-    # 3. If yt-dlp also short/failed, return JioSaavn result if we had one
+    # 3. If yt-dlp also short/failed but JioSaavn had something, return that
     if song:
+        print(f"[fallback] Returning JioSaavn short clip as last resort")
         return song
+
+    if yt_song:
+        return yt_song
 
     # 4. Last resort: Deezer/iTunes 30sec preview
     deezer = _deezer_search(query, 5)
@@ -634,102 +641,104 @@ def search_song_download(query, quality="320"):
 
 # ==================== YOUTUBE MUSIC (yt-dlp fallback) ====================
 
-def _ytdlp_search_download(query, quality="320"):
+def _ytdlp_search_download(query):
     """
-    Search YouTube Music and get direct audio download URL via yt-dlp.
-    Used as fallback when JioSaavn fails — finds rare/regional songs too.
-    Returns same dict format as JioSaavn functions.
+    Search YouTube Music and download audio to temp file.
+    Returns same dict format as JioSaavn — with a local file path as download_url.
+    Used as fallback when JioSaavn fails.
     """
     try:
         import yt_dlp
     except ImportError:
-        print("[yt-dlp] Not installed. Add 'yt-dlp' to requirements.txt")
+        print("[yt-dlp] Not installed — add yt-dlp to requirements.txt")
         return None
 
     try:
-        # Search YouTube Music specifically (better metadata than plain YouTube)
-        search_query = f"ytmsearch1:{query}"
+        os.makedirs("dl", exist_ok=True)
+        # Safe filename
+        safe_name = "".join(c for c in query if c.isalnum() or c in " -_")[:40].strip()
+        out_path = f"dl/yt_{safe_name}.mp3"
 
         ydl_opts = {
             "quiet": True,
             "no_warnings": True,
-            "extract_flat": True,  # Don't download yet, just get info
-            "default_search": "ytmsearch",
+            "format": "bestaudio/best",
+            "outtmpl": out_path.replace(".mp3", ".%(ext)s"),
             "noplaylist": True,
+            "default_search": "ytmsearch",  # Search YouTube Music
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+            # Get metadata
+            "writethumbnail": False,
+            "writeinfojson": False,
         }
 
+        search_query = f"ytmsearch1:{query}"
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search_query, download=False)
+            info = ydl.extract_info(search_query, download=True)
 
         if not info:
             return None
 
-        # extract_flat gives entries list
-        entries = info.get("entries", [info])
-        if not entries:
-            return None
+        # extract_info with ytmsearch returns entries list
+        entry = info
+        if "entries" in info and info["entries"]:
+            entry = info["entries"][0]
 
-        entry = entries[0]
-        video_id = entry.get("id") or entry.get("url", "").split("v=")[-1]
+        # Get actual downloaded file path
+        video_id = entry.get("id", "")
         title = entry.get("title", query)
         duration = int(entry.get("duration") or 0)
-        artist = entry.get("artist") or entry.get("uploader", "Unknown")
-        album = entry.get("album", "Unknown")
+        # Try to get real artist from metadata
+        artist = (entry.get("artist")
+                  or entry.get("creator")
+                  or entry.get("uploader", "Unknown"))
+        album = entry.get("album") or title
 
-        if not video_id:
+        # Find the actual downloaded file (extension may vary before ffmpeg)
+        actual_path = out_path
+        if not os.path.exists(actual_path):
+            # Try common extensions
+            for ext in ["mp3", "m4a", "webm", "opus", "ogg"]:
+                candidate = out_path.replace(".mp3", f".{ext}")
+                if os.path.exists(candidate):
+                    actual_path = candidate
+                    break
+
+        if not os.path.exists(actual_path):
+            print(f"[yt-dlp] Downloaded file not found for: {query}")
             return None
 
-        print(f"[yt-dlp] Found: {title} | {video_id}")
-
-        # Now get actual audio stream URL (no download, just URL)
-        stream_url = _ytdlp_get_stream_url(video_id)
-        if not stream_url:
+        # Verify file size
+        if os.path.getsize(actual_path) < 10000:
+            os.remove(actual_path)
+            print(f"[yt-dlp] File too small for: {query}")
             return None
+
+        print(f"[yt-dlp] ✅ Downloaded: {title} ({duration}s) → {actual_path}")
 
         return {
             "source": "youtube",
             "name": title,
             "artist": artist,
-            "album": album if album != "Unknown" else title,
+            "primaryArtists": artist,
+            "album": album,
             "year": str(entry.get("release_year") or entry.get("upload_date", "")[:4] or "Unknown"),
             "duration": duration,
             "language": "Unknown",
-            "download_url": stream_url,
+            "download_url": actual_path,  # Local file path — skip download_song_file
             "id": video_id,
-            "quality": "128kbps",  # YouTube free tier audio
+            "quality": "192kbps",
+            "_is_local_file": True,  # Flag: already downloaded, use directly
         }
 
     except Exception as e:
         print(f"[yt-dlp search] Error: {e}")
         return None
-
-
-def _ytdlp_get_stream_url(video_id):
-    """Get direct streamable audio URL from YouTube video ID"""
-    try:
-        import yt_dlp
-    except ImportError:
-        return None
-
-    try:
-        ydl_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "format": "bestaudio[ext=m4a]/bestaudio/best",
-            "noplaylist": True,
-            "skip_download": True,  # Don't download, just get URL
-        }
-
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if info:
-                return info.get("url")
-
-    except Exception as e:
-        print(f"[yt-dlp stream] Error: {e}")
-
-    return None
 
 
 def _ytdlp_search_multiple(query, limit=6):
