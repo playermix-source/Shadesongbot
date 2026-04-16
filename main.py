@@ -1461,16 +1461,21 @@ _COVER_SIGNALS_ARTIST = [
 
 def _is_valid_result(song):
     """Filter: remove short clips, unknown artists, covers, mashups, wrong versions"""
+    import re as _re
     name = song.get("name", "").lower()
     artist = song.get("primaryArtists", song.get("artist", "")).lower().strip()
     duration = int(song.get("duration", 0))
 
-    # Remove too-short tracks — under 90s is almost always a clip/promo/intro
-    if 0 < duration < 90:
+    # Remove too-short tracks — under 120s is almost always a clip/promo/intro
+    if 0 < duration < 120:
         return False
 
     # Remove unknown/blank artist
     if not artist or artist in ("unknown", "various artists", ""):
+        return False
+
+    # Remove version number songs like "Song 2.0", "Song 3.0" — almost always unwanted
+    if _re.search(r'\b\d+\.\d+\b', name):
         return False
 
     # Remove if name has cover/mashup/version signals
@@ -1484,7 +1489,6 @@ def _is_valid_result(song):
             return False
 
     # Remove remix patterns: "Song Name - Remix", "Song (DJ Mix)"
-    import re as _re
     if _re.search(r'[\(\[](remix|mix|edit|dj|remaster|remastered|version|ver\.)[\)\]]', name):
         return False
 
