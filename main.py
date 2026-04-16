@@ -357,11 +357,11 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
         await msg.edit("❌ Song not found! Try a different name.")
         return
 
-    # Reject clips/promos under 90 seconds
-    if duration and 0 < duration < 90:
+    # Reject clips/promos under 60 seconds — yt-dlp fallback handles 90s edge cases
+    if duration and 0 < duration < 60:
         await msg.edit(
             f"⚠️ Found only a short clip ({duration}s) for `{query}`.\n\n"
-            f"Try being more specific:\n`/download {query} full song`"
+            f"Try: `/download {query}` with artist name — e.g. `/download pal pal talwiinder`"
         )
         return
 
