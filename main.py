@@ -352,17 +352,23 @@ def download_song_file(url, title):
     return path
 
 async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=None):
-    dl_url, title, duration, song_data = await asyncio.to_thread(search_jiosaavn_quality, query, quality)
+    # Use search_song_download — has JioSaavn + yt-dlp fallback + duration check built in
+    raw = await asyncio.to_thread(apis.search_song_download, query, quality)
+    if not raw:
+        await msg.edit("❌ Song not found! Try a different name.")
+        return
+    raw = _normalize_song(raw)
+    dl_url = raw.get("download_url")
+    title = f"{raw['name']} - {raw['primaryArtists']}"
+    duration = raw.get("duration", 0)
+    song_data = raw
     if not dl_url:
         await msg.edit("❌ Song not found! Try a different name.")
         return
 
-    # Reject clips/promos under 60 seconds — yt-dlp fallback handles 90s edge cases
+    # Only reject truly tiny clips under 60s (search_song_download already handles 90s fallback)
     if duration and 0 < duration < 60:
-        await msg.edit(
-            f"⚠️ Found only a short clip ({duration}s) for `{query}`.\n\n"
-            f"Try: `/download {query}` with artist name — e.g. `/download pal pal talwiinder`"
-        )
+        await msg.edit(f"❌ Couldn't find full song for `{query}`.\nTry adding artist name: `/download pal pal talwiinder`")
         return
 
     mins, secs = duration // 60, duration % 60
