@@ -748,54 +748,62 @@ def _ytdlp_download(query):
         print("[yt-dlp] Not installed — add yt-dlp to requirements.txt")
         return None
 
-    import os, tempfile
+    import os
 
-    def _try_download(search_q):
+    def _try_search(search_prefix, search_q):
         try:
             tmp_dir = "/tmp/beatnova_dl"
             os.makedirs(tmp_dir, exist_ok=True)
             safe = "".join(c for c in search_q if c.isalnum() or c in " -_")[:40].strip()
             out_template = os.path.join(tmp_dir, f"{safe}.%(ext)s")
             ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "format": "bestaudio/best",
+                "quiet": False,   # show errors in Railway logs
+                "no_warnings": False,
+                "format": "bestaudio[ext=m4a]/bestaudio/best",
                 "outtmpl": out_template,
                 "noplaylist": True,
-                "match_filter": lambda info, **kw: None if (info.get("duration") or 0) >= 60 else "too short",
+                "socket_timeout": 30,
+                "retries": 2,
                 "postprocessors": [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": "192",
                 }],
             }
+            search_url = f"{search_prefix}:{search_q}"
+            print(f"[yt-dlp] Searching: {search_url}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(f"ytmsearch1:{search_q}", download=True)
+                info = ydl.extract_info(search_url, download=True)
             if not info:
+                print(f"[yt-dlp] No info returned for: {search_q}")
                 return None
             entry = info["entries"][0] if "entries" in info and info["entries"] else info
             duration = int(entry.get("duration") or 0)
             if duration < 60:
-                print(f"[yt-dlp] Too short ({duration}s) for: {search_q}")
+                print(f"[yt-dlp] Too short ({duration}s): {entry.get('title')}")
                 return None
-            title    = entry.get("title", search_q)
-            artist   = (entry.get("artist") or entry.get("creator") or entry.get("uploader", "Unknown"))
-            album    = entry.get("album") or title
-            year     = str(entry.get("release_year") or (entry.get("upload_date", "") or "")[:4] or "Unknown")
-            video_id = entry.get("id", "")
+            title   = entry.get("title", search_q)
+            artist  = entry.get("artist") or entry.get("creator") or entry.get("uploader", "Unknown")
+            album   = entry.get("album") or title
+            year    = str(entry.get("release_year") or (entry.get("upload_date") or "")[:4] or "Unknown")
+            vid_id  = entry.get("id", "")
+            # Find downloaded file
             local_path = os.path.join(tmp_dir, f"{safe}.mp3")
             if not os.path.exists(local_path):
                 for ext in ["mp3", "m4a", "webm", "opus", "ogg"]:
-                    candidate = os.path.join(tmp_dir, f"{safe}.{ext}")
-                    if os.path.exists(candidate):
-                        local_path = candidate
+                    c = os.path.join(tmp_dir, f"{safe}.{ext}")
+                    if os.path.exists(c):
+                        local_path = c
                         break
             if not os.path.exists(local_path):
-                print(f"[yt-dlp] File not found after download for: {search_q}")
+                print(f"[yt-dlp] File not found after download: {safe}.*")
                 return None
-            if os.path.getsize(local_path) < 10000:
+            fsize = os.path.getsize(local_path)
+            if fsize < 10000:
+                print(f"[yt-dlp] File too small ({fsize}b), discarding")
                 os.remove(local_path)
                 return None
+            print(f"[yt-dlp] ✅ Downloaded: {title} ({duration}s, {fsize//1024}KB)")
             return {
                 "source": "youtube",
                 "name": title,
@@ -807,28 +815,32 @@ def _ytdlp_download(query):
                 "language": "Unknown",
                 "download_url": local_path,
                 "_local_path": local_path,
-                "id": video_id,
+                "id": vid_id,
                 "quality": "192kbps",
             }
         except Exception as e:
-            print(f"[yt-dlp] Error for '{search_q}': {e}")
+            print(f"[yt-dlp] {search_prefix} error for '{search_q}': {type(e).__name__}: {e}")
             return None
 
-    # Try original query first
-    result = _try_download(query)
+    # Try YouTube Music first (better for Indian songs)
+    result = _try_search("ytmsearch1", query)
     if result:
-        print(f"[yt-dlp] ✅ {result.get('name')} ({result.get('duration')}s)")
         return result
 
-    # If query has artist words, try without them — e.g. "pal pal talwiinder" → "pal pal"
+    # Fallback: regular YouTube search
+    print(f"[yt-dlp] ytmsearch failed, trying ytsearch for: {query}")
+    result2 = _try_search("ytsearch1", query)
+    if result2 and int(result2.get("duration", 0)) >= 90:
+        return result2
+
+    # If 3+ word query, retry with first 2 words only on YouTube
     words = query.strip().split()
-    if len(words) > 2:
-        shorter = " ".join(words[:2])
-        print(f"[yt-dlp] Retrying with shorter query: {shorter}")
-        result2 = _try_download(shorter)
-        if result2 and int(result2.get("duration", 0)) >= 90:
-            print(f"[yt-dlp] ✅ (shorter) {result2.get('name')} ({result2.get('duration')}s)")
-            return result2
+    if len(words) >= 3:
+        short_q = " ".join(words[:2])
+        print(f"[yt-dlp] Retrying with shorter: {short_q}")
+        result3 = _try_search("ytsearch1", short_q)
+        if result3 and int(result3.get("duration", 0)) >= 90:
+            return result3
 
     return None
 
