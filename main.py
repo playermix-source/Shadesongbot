@@ -18,10 +18,10 @@ START_TIME = datetime.datetime.now()
 
 active_quiz = {}
 group_votes = {}
-active_bomb = {}   # {chat_id: {"holder": user_id, "name": str, "timer": int, "players": {id: name}}}
-active_duel = {}   # {chat_id: {"p1": id, "p2": id, "hp1": int, "hp2": int, "turn": id}}
-active_guess = {}  # {chat_id: {"number": int, "attempts": int}}
-active_wordle = {} # {user_id: {"word": str, "attempts": list}}
+active_bomb = {}
+active_duel = {}
+active_guess = {}
+active_wordle = {}
 _pending_downloads = {}  # {user_id:query_key: {results, is_group, user_id, first_name}}
 today_downloads = {"count": 0, "date": datetime.date.today()}
 chat_histories = {}  # {user_id: [{"role": "user/assistant", "content": "..."}]}
@@ -321,9 +321,10 @@ def fetch_quote():
         ])
 
 def download_song_file(url, title):
-    os.makedirs("dl", exist_ok=True)
+    dl_dir = "/tmp/beatnova_dl"
+    os.makedirs(dl_dir, exist_ok=True)
     safe = "".join(c for c in title if c.isalnum() or c in " -_")[:50]
-    path = f"dl/{safe}.mp3"
+    path = f"{dl_dir}/{safe}.mp3"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "audio/mpeg, audio/*, */*",
@@ -353,23 +354,26 @@ def download_song_file(url, title):
     return path
 
 async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=None):
-    # Use search_song_download — has JioSaavn + yt-dlp fallback + duration check built in
     raw = await asyncio.to_thread(apis.search_song_download, query, quality)
     if not raw:
         await msg.edit("❌ Song not found! Try a different name.")
         return
+
+    # Preserve _local_path before normalize strips it
+    local_path = raw.get("_local_path")
+
     raw = _normalize_song(raw)
     dl_url = raw.get("download_url")
     title = f"{raw['name']} - {raw['primaryArtists']}"
     duration = raw.get("duration", 0)
     song_data = raw
+
     if not dl_url:
         await msg.edit("❌ Song not found! Try a different name.")
         return
 
     mins, secs = duration // 60, duration % 60
 
-    # Safely resolve user_id and first_name — m.from_user is None in bot-sent DM messages
     user_id = _user_id or (m.from_user.id if m.from_user else None)
     first_name = _first_name or (m.from_user.first_name if m.from_user else "User")
     if not user_id:
@@ -378,16 +382,14 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
 
     is_first = db.get_user(user_id) is None or db.get_user(user_id)["downloads"] == 0
 
-    # Step 1: Show cool loading messages
     loading_seq = random.choice(LOADING_MESSAGES)
     try:
         await msg.edit(f"**{loading_seq[0]}**")
     except: pass
 
-    # Step 2: Download with timeout protection (120 sec max)
-    # If yt-dlp already downloaded the file, use it directly
-    if song_data.get("_is_local_file") and os.path.exists(dl_url):
-        path = dl_url
+    # If yt-dlp already downloaded to local file, use it directly
+    if local_path and os.path.exists(local_path):
+        path = local_path
     else:
         try:
             path = await asyncio.wait_for(
@@ -395,17 +397,17 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
                 timeout=120
             )
         except asyncio.TimeoutError:
-            await msg.edit(f"❌ **Timeout!** Server slow hai.\n🔄 Dobara try karo: `/download {query}`")
+            await msg.edit(f"❌ **Timeout!** Server slow hai.\n🔄 Try: `/download {query}`")
             return
         except Exception as e:
             err = str(e)
-            # Try with alternate URL from different API
             try:
                 await msg.edit(f"**{loading_seq[1]}** (switching source...)")
                 song_alt = await asyncio.to_thread(apis.search_song_download, query, quality)
+                local_alt = song_alt.get("_local_path") if song_alt else None
                 if song_alt and song_alt.get("download_url") and song_alt["download_url"] != dl_url:
-                    if song_alt.get("_is_local_file") and os.path.exists(song_alt["download_url"]):
-                        path = song_alt["download_url"]
+                    if local_alt and os.path.exists(local_alt):
+                        path = local_alt
                     else:
                         path = await asyncio.wait_for(
                             asyncio.to_thread(download_song_file, song_alt["download_url"], title),
@@ -1475,8 +1477,8 @@ def _is_valid_result(song):
     artist = song.get("primaryArtists", song.get("artist", "")).lower().strip()
     duration = int(song.get("duration", 0))
 
-    # duration=0 means YouTube source (not yet fetched) — always allow
-    # Only reject if we KNOW it's a short clip (between 1s and 55s)
+    # duration=0 means YouTube source (duration not yet known) — always allow
+    # Only reject if we KNOW it's a short clip (1-55s)
     if 0 < duration < 55:
         return False
 
