@@ -1,8 +1,11 @@
 import sqlite3
 import datetime
-
 import os
-DB_PATH = os.path.join(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/app"), "beatnova.db")
+
+# Railway free plan: no persistent volume — use /tmp (survives restarts but not deploys)
+# Set RAILWAY_VOLUME_MOUNT_PATH env var if you ever upgrade to paid plan with volume
+_DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/tmp")
+DB_PATH = os.path.join(_DATA_DIR, "beatnova.db")
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
