@@ -620,34 +620,63 @@ def search_songs(query, limit=10):
 def search_song_download(query, quality="320"):
     """
     Get best downloadable song.
-    Flow: JioSaavn (320kbps full) → yt-dlp YouTube Music (if JioSaavn short/missing) → preview fallback
+    Flow: JioSaavn (320kbps full) → smart alt queries → yt-dlp → preview fallback
     """
-    # 1. Try JioSaavn — fast, 320kbps
-    song = _saavn_quality(query, quality)
-    saavn_duration = int(song.get("duration", 0)) if song else 0
+    def _saavn_full(q):
+        s = _saavn_quality(q, quality)
+        if s and int(s.get("duration", 0)) >= 90:
+            return s
+        return None
 
-    if song and saavn_duration >= 90:
-        print(f"[saavn] ✅ {song.get('name')} ({saavn_duration}s)")
+    # 1. Try original query on JioSaavn
+    song = _saavn_full(query)
+    if song:
+        print(f"[saavn] ✅ {song.get('name')} ({song.get('duration')}s)")
         return song
 
-    # JioSaavn returned a clip (<90s) or nothing — try yt-dlp
-    if song:
-        print(f"[saavn] ⚠️ Short clip {saavn_duration}s for '{query}' — trying yt-dlp")
+    saavn_short = _saavn_quality(query, quality)  # save short result for last resort
+    if saavn_short:
+        print(f"[saavn] ⚠️ Short clip ({saavn_short.get('duration')}s) for '{query}' — trying alt queries")
     else:
-        print(f"[saavn] ❌ Not found '{query}' — trying yt-dlp")
+        print(f"[saavn] ❌ Not found '{query}' — trying alt queries")
 
-    # 2. yt-dlp: search YouTube Music, download to temp file directly
+    # 2. Smart alternate queries on JioSaavn (avoid yt-dlp which may be blocked)
+    words = query.lower().strip().split()
+    alt_queries = []
+    if len(words) >= 3:
+        alt_queries.append(" ".join(words[:2]))           # "pal pal talwiinder" → "pal pal"
+        alt_queries.append(" ".join(words[1:]))           # → "pal talwiinder"
+        alt_queries.append(f"{words[-1]} {words[0]}")    # → "talwiinder pal"
+        alt_queries.append(" ".join(words[:3]))           # same as original if 3 words, skip
+    if len(words) >= 2:
+        alt_queries.append(words[0])                      # just first word
+        alt_queries.append(f"{words[0]} song")
+
+    seen_queries = {query.lower().strip()}
+    for alt_q in alt_queries:
+        alt_q = alt_q.strip()
+        if alt_q in seen_queries or len(alt_q) < 3:
+            continue
+        seen_queries.add(alt_q)
+        print(f"[search_song_download] Alt query: '{alt_q}'")
+        s = _saavn_full(alt_q)
+        if s:
+            print(f"[search_song_download] ✅ Found via '{alt_q}': {s.get('name')}")
+            return s
+
+    # 3. yt-dlp fallback (works if Railway allows YouTube)
+    print(f"[yt-dlp] Trying: {query}")
     yt_song = _ytdlp_download(query)
-    if yt_song:
+    if yt_song and int(yt_song.get("duration", 0)) >= 90:
         print(f"[yt-dlp] ✅ {yt_song.get('name')} ({yt_song.get('duration')}s)")
         return yt_song
 
-    # 3. JioSaavn short clip better than nothing
-    if song:
+    # 4. Last resort: short JioSaavn clip
+    if saavn_short:
         print(f"[saavn] ⚠️ Returning short clip as last resort")
-        return song
+        return saavn_short
 
-    # 4. Deezer/iTunes 30sec preview
+    # 5. Deezer/iTunes 30sec preview
     for results in [_deezer_search(query, 5), _itunes_search(query, 5)]:
         if results:
             best = _find_best_match(results, query)
