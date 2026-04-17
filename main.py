@@ -3144,6 +3144,27 @@ async def quiz_check(_, m: Message):
                           f"✨ **+{XP_REWARDS['quiz_win']} XP!**\n\n"
                           f"📥 `/download {quiz['title']}`")
 
+# ========== TMP CLEANUP TASK ==========
+
+async def cleanup_tmp():
+    """Clean /tmp/beatnova_dl every 30 mins — prevents Railway disk full crash"""
+    while True:
+        await asyncio.sleep(1800)  # every 30 minutes
+        try:
+            dl_dir = "/tmp/beatnova_dl"
+            if os.path.exists(dl_dir):
+                now = datetime.datetime.now().timestamp()
+                for f in os.listdir(dl_dir):
+                    fpath = os.path.join(dl_dir, f)
+                    try:
+                        # Delete files older than 15 minutes
+                        if os.path.isfile(fpath) and (now - os.path.getmtime(fpath)) > 900:
+                            os.remove(fpath)
+                    except:
+                        pass
+        except:
+            pass
+
 # ========== DAILY SONG TASK ==========
 
 async def send_daily_songs():
@@ -3943,12 +3964,14 @@ async def menu_page(_, cb):
     await cb.answer()
 
 async def main():
-    await app.start()
     db.init_db()
+    await app.start()
     print(f"✅ {BOT_NAME} started!")
+    asyncio.create_task(cleanup_tmp())
     asyncio.create_task(send_daily_songs())
     asyncio.create_task(send_micro_tips())
     asyncio.create_task(send_hook_challenge())
     await asyncio.Event().wait()
 
-app.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
