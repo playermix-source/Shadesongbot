@@ -709,8 +709,22 @@ def search_song_download(query, quality="320"):
         print(f"[search_song_download] Alt query: '{alt_q}'")
         s = _saavn_full(alt_q)
         if s:
-            print(f"[search_song_download] ✅ Found via '{alt_q}': {s.get('name')} ({s.get('duration')}s)")
-            return s
+            # Validate: result name must contain ALL original title words
+            # e.g. alt "pal pal" → result "Pal" (Arijit) = REJECT because "pal pal" not in "pal"
+            result_name = s.get("name", "").lower()
+            result_name_words = result_name.split()
+            title_words_ordered = title_part.split() if len(words) >= 3 else query.lower().split()
+            # Check result has at least as many title word occurrences as query
+            valid = True
+            for tw in title_words_ordered:
+                if result_name_words.count(tw) < title_words_ordered.count(tw):
+                    valid = False
+                    break
+            if valid:
+                print(f"[search_song_download] ✅ Found via '{alt_q}': {s.get('name')} ({s.get('duration')}s)")
+                return s
+            else:
+                print(f"[search_song_download] ❌ Rejected '{s.get('name')}' — doesn't match title '{title_part}'")
 
     # 3. yt-dlp fallback
     print(f"[yt-dlp] Trying: {query}")
