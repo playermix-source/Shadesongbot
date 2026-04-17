@@ -67,11 +67,24 @@ def _find_best_match(results, query):
         name = song.get("name", "").lower().strip()
         artist = song.get("primaryArtists", song.get("artist", "")).lower()
         name_words = set(name.split())
+        name_words_list = name.split()
         score = 0
 
         # 1. Exact name match (on song title portion)
-        if name == query_clean or name == " ".join(song_title_words):
+        if name == query_clean or name == " ".join(sorted(song_title_words)):
             score += 100
+
+        # 1b. Strong bonus: name starts with ALL query title words in order
+        if artist_query_words:
+            title_words_list = [w for w in query_clean.split() if w not in artist_query_words]
+        else:
+            title_words_list = query_clean.split()
+        if name_words_list[:len(title_words_list)] == title_words_list:
+            score += 40
+
+        # 1c. Penalize: song name has FEWER words than query title — "Pal" vs "Pal Pal"
+        if len(name_words_list) < len(title_words_list):
+            score -= 30 * (len(title_words_list) - len(name_words_list))
 
         # 2. Word match score — match against song title words if we detected artist words
         if artist_query_words:
@@ -93,18 +106,17 @@ def _find_best_match(results, query):
                 score -= 10
 
         # 5. Bonus if name starts with first song-title query word
-        title_first = list(song_title_words)[0] if song_title_words else (query_clean.split()[0] if query_clean.split() else "")
+        title_first = title_words_list[0] if title_words_list else ""
         if name.startswith(title_first):
             score += 8
 
         # 6. Strong bonus if artist name matches the artist portion of query
         artist_words_song = set(re.sub(r'[^a-z0-9 ]', '', artist.split(",")[0].strip()).split())
         if artist_query_words:
-            # User typed artist name — give HIGH bonus for exact artist match
             artist_q_clean = set(re.sub(r'[^a-z0-9]', '', w) for w in artist_query_words)
             artist_s_clean = set(re.sub(r'[^a-z0-9]', '', w) for w in artist_words_song)
             if artist_q_clean & artist_s_clean:
-                score += 30  # Strong artist match bonus
+                score += 30
         else:
             if artist_words_song & query_words:
                 score += 5
@@ -522,11 +534,25 @@ def _score_all(results, query):
         name = song.get("name", "").lower().strip()
         artist = song.get("primaryArtists", song.get("artist", "")).lower()
         name_words = set(name.split())
+        name_words_list = name.split()
         score = 0
 
         # Exact name match
         if name == query_clean or (song_title_words and name == " ".join(sorted(song_title_words))):
             score += 100
+
+        # Strong bonus: name starts with all query title words in order
+        # Use list (not set) to preserve duplicates like "pal pal"
+        if artist_query_words:
+            title_words_list = [w for w in query_clean.split() if w not in artist_query_words]
+        else:
+            title_words_list = query_clean.split()
+        if name_words_list[:len(title_words_list)] == title_words_list:
+            score += 40
+
+        # Penalize: song name has FEWER words than query title — "Pal" vs "Pal Pal"
+        if len(name_words_list) < len(title_words_list):
+            score -= 30 * (len(title_words_list) - len(name_words_list))
 
         # Word match
         ref_words = song_title_words if artist_query_words else query_words
@@ -560,12 +586,12 @@ def _score_all(results, query):
             if artist_words_song & query_words:
                 score += 5
 
-        # Shorter name bonus
+        # Shorter name penalty
         name_extra_len = len(name) - len(" ".join(ref_words))
         if name_extra_len > 10:
             score -= min(name_extra_len // 5, 10)
 
-        # Prefer longer duration (avoid clips) — songs under 90s get penalized
+        # Prefer longer duration
         duration = int(song.get("duration", 0))
         if 0 < duration < 90:
             score -= 50
@@ -634,37 +660,39 @@ def search_song_download(query, quality="320"):
         print(f"[saavn] ✅ {song.get('name')} ({song.get('duration')}s)")
         return song
 
-    saavn_short = _saavn_quality(query, quality)  # save short result for last resort
+    saavn_short = _saavn_quality(query, quality)
     if saavn_short:
-        print(f"[saavn] ⚠️ Short clip ({saavn_short.get('duration')}s) for '{query}' — trying alt queries")
+        print(f"[saavn] ⚠️ Short clip ({saavn_short.get('duration')}s) for '{query}'")
     else:
-        print(f"[saavn] ❌ Not found '{query}' — trying alt queries")
+        print(f"[saavn] ❌ Not found '{query}'")
 
-    # 2. Smart alternate queries on JioSaavn (avoid yt-dlp which may be blocked)
+    # 2. Smart alternate queries — only meaningful combos, NO single words
     words = query.lower().strip().split()
     alt_queries = []
     if len(words) >= 3:
-        alt_queries.append(" ".join(words[:2]))           # "pal pal talwiinder" → "pal pal"
-        alt_queries.append(" ".join(words[1:]))           # → "pal talwiinder"
-        alt_queries.append(f"{words[-1]} {words[0]}")    # → "talwiinder pal"
-        alt_queries.append(" ".join(words[:3]))           # same as original if 3 words, skip
-    if len(words) >= 2:
-        alt_queries.append(words[0])                      # just first word
-        alt_queries.append(f"{words[0]} song")
+        # "pal pal talwiinder" → try all 2-word pairs that include title words
+        # Keep first 2 words (most likely song title)
+        two_words = " ".join(words[:2])
+        alt_queries.append(two_words)
+        # Last word + first word (swap artist/title order)
+        alt_queries.append(f"{words[-1]} {words[0]}")
+        # Last 2 words
+        alt_queries.append(" ".join(words[-2:]))
+    # Never try single words — too broad, wrong song guaranteed
 
     seen_queries = {query.lower().strip()}
     for alt_q in alt_queries:
         alt_q = alt_q.strip()
-        if alt_q in seen_queries or len(alt_q) < 3:
+        if alt_q in seen_queries or len(alt_q) < 4:
             continue
         seen_queries.add(alt_q)
         print(f"[search_song_download] Alt query: '{alt_q}'")
         s = _saavn_full(alt_q)
         if s:
-            print(f"[search_song_download] ✅ Found via '{alt_q}': {s.get('name')}")
+            print(f"[search_song_download] ✅ Found via '{alt_q}': {s.get('name')} ({s.get('duration')}s)")
             return s
 
-    # 3. yt-dlp fallback (works if Railway allows YouTube)
+    # 3. yt-dlp fallback
     print(f"[yt-dlp] Trying: {query}")
     yt_song = _ytdlp_download(query)
     if yt_song and int(yt_song.get("duration", 0)) >= 90:
@@ -676,7 +704,7 @@ def search_song_download(query, quality="320"):
         print(f"[saavn] ⚠️ Returning short clip as last resort")
         return saavn_short
 
-    # 5. Deezer/iTunes 30sec preview
+    # 5. Deezer/iTunes preview
     for results in [_deezer_search(query, 5), _itunes_search(query, 5)]:
         if results:
             best = _find_best_match(results, query)
