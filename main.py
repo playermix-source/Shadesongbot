@@ -359,6 +359,20 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
         await msg.edit("❌ Song not found! Try a different name.")
         return
 
+    # If result is a short clip (<90s), force yt-dlp retry regardless of source
+    if int(raw.get("duration", 0)) > 0 and int(raw.get("duration", 0)) < 90:
+        print(f"[send_song] Short clip ({raw.get('duration')}s) from {raw.get('source')} — forcing yt-dlp")
+        yt_raw = await asyncio.to_thread(apis._ytdlp_download, query)
+        if yt_raw and int(yt_raw.get("duration", 0)) >= 90:
+            raw = yt_raw
+        else:
+            # yt-dlp also couldn't find full song
+            await msg.edit(
+                f"❌ **Full song not found** for `{query}`.\n\n"
+                f"Try: `/download afusic pal pal` or `/download pal pal afusic talwiinder`"
+            )
+            return
+
     # Preserve _local_path before normalize strips it
     local_path = raw.get("_local_path")
 
