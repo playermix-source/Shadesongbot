@@ -8,5 +8,8 @@ if not API_ID or not API_HASH or not BOT_TOKEN:
     raise ValueError(
         "❌ Missing required environment variables!\n"
         "Set these in Railway → Variables:\n"
-        "  API_ID, API_HASH, BOT_TOKEN"
+        "  API_ID, API_HASH, BOT_TOKEN\n\n"
+        "Optional (for extra features):\n"
+        "  GROQ_API_KEY  → AI chat feature\n"
+        "  LASTFM_KEY    → Trending/Similar artists feature"
     )
