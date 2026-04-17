@@ -359,6 +359,34 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
         await msg.edit("❌ Song not found! Try a different name.")
         return
 
+    # Validate result matches query — reject clearly wrong songs
+    # e.g. query "pal pal talwiinder" → result "Pal" (Arijit) = WRONG
+    result_name = raw.get("name", "").lower().strip()
+    query_title_words = query.lower().split()
+    # Remove known artist words from query for title check
+    import re as _re
+    # Simple check: if query has 2+ repeated words (like "pal pal"), result must also have them
+    from collections import Counter
+    q_counts = Counter(query_title_words)
+    r_counts = Counter(result_name.split())
+    title_mismatch = any(
+        q_counts[w] > 1 and r_counts[w] < q_counts[w]
+        for w in q_counts if q_counts[w] > 1
+    )
+    if title_mismatch:
+        print(f"[send_song] ❌ Title mismatch: query='{query}' result='{raw.get('name')}' — forcing yt-dlp")
+        yt_raw2 = await asyncio.to_thread(apis._ytdlp_download, query)
+        if yt_raw2 and int(yt_raw2.get("duration", 0)) >= 90:
+            raw = yt_raw2
+            local_path = raw.get("_local_path")
+        else:
+            await msg.edit(
+                f"❌ **Song not found** for `{query}`.\n\n"
+                f"💡 This song may only be on YouTube.\n"
+                f"Try: `/download {' '.join(query.split()[:2])}`"
+            )
+            return
+
     # If result is still a short clip (<90s), force yt-dlp with original user query
     if int(raw.get("duration", 0)) > 0 and int(raw.get("duration", 0)) < 90:
         print(f"[send_song] Short clip ({raw.get('duration')}s) — forcing yt-dlp with: {query}")
