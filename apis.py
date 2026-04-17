@@ -25,6 +25,18 @@ PENALTY_WORDS = [
     "soundtrack", "ost", "bgm",
 ]
 
+# Artist aliases — many songs have multiple artists, user types one but JioSaavn indexes by another
+# Format: "what user types" -> ["what JioSaavn uses", ...]
+ARTIST_ALIASES = {
+    "talwiinder": ["afusic", "afusic talwiinder", "alisoomromusic"],
+    "talwinder": ["afusic", "afusic talwiinder"],
+    "ap dhillon": ["ap dhillon gurinder gill", "shinda kahlon"],
+    "b praak": ["b praak jaani"],
+    "darshan raval": ["darshan raval"],
+    "jubin nautiyal": ["jubin nautiyal"],
+    "arijit": ["arijit singh"],
+}
+
 # ==================== BEST MATCH ALGORITHM ====================
 
 def _find_best_match(results, query):
@@ -670,15 +682,23 @@ def search_song_download(query, quality="320"):
     words = query.lower().strip().split()
     alt_queries = []
     if len(words) >= 3:
-        # "pal pal talwiinder" → try all 2-word pairs that include title words
-        # Keep first 2 words (most likely song title)
-        two_words = " ".join(words[:2])
-        alt_queries.append(two_words)
-        # Last word + first word (swap artist/title order)
-        alt_queries.append(f"{words[-1]} {words[0]}")
-        # Last 2 words
+        title_part = " ".join(words[:2])  # e.g. "pal pal"
+        artist_part = " ".join(words[2:])  # e.g. "talwiinder"
+
+        # Try title only
+        alt_queries.append(title_part)
+
+        # Check artist aliases — e.g. "talwiinder" → try "afusic pal pal"
+        for word in words[2:]:
+            if word in ARTIST_ALIASES:
+                for alias in ARTIST_ALIASES[word]:
+                    alt_queries.append(f"{title_part} {alias}")
+                    alt_queries.append(f"{alias} {title_part}")
+
+        # Try swapped: artist + title
+        alt_queries.append(f"{artist_part} {title_part}")
+        # Try last 2 words
         alt_queries.append(" ".join(words[-2:]))
-    # Never try single words — too broad, wrong song guaranteed
 
     seen_queries = {query.lower().strip()}
     for alt_q in alt_queries:
