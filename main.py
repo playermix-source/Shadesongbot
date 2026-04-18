@@ -695,6 +695,7 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
 
 # ========== CALLBACKS ==========
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^dl_"))
 async def dl_callback(_, cb):
     song = cb.data[3:]
@@ -702,6 +703,7 @@ async def dl_callback(_, cb):
     msg = await cb.message.reply(f"⬇️ Searching `{song}`...")
     await send_song(cb.message, song, msg)
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^save_"))
 async def save_callback(_, cb):
     song_title = cb.data[5:]
@@ -714,6 +716,7 @@ async def save_callback(_, cb):
     db.increment_song_favorites(song_title)
     await cb.answer("⭐ Saved to favorites!", show_alert=True)
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^sim_"))
 async def similar_callback(_, cb):
     song_title = cb.data[4:]
@@ -747,6 +750,7 @@ async def similar_callback(_, cb):
         print(f"[similar_cb] {e}")
     await cb.answer()
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^lyr_"))
 async def lyrics_callback(_, cb):
     song_title = cb.data[4:]
@@ -768,6 +772,7 @@ async def lyrics_callback(_, cb):
             remaining = remaining[4096:]
     await cb.answer()
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^react_"))
 async def reaction_callback(_, cb):
     parts = cb.data.split("_")
@@ -793,12 +798,14 @@ async def reaction_callback(_, cb):
         ]))
     except: pass
 
+@safe_handler
 @app.on_callback_query(filters.regex("dl_birthday"))
 async def birthday_dl(_, cb):
     await cb.answer()
     msg = await cb.message.reply("⬇️ Downloading...")
     await send_song(cb.message, "Baar Baar Din Yeh Aaye", msg)
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^rate_"))
 async def rate_callback(_, cb):
     parts = cb.data.split("_")
@@ -814,6 +821,7 @@ async def rate_callback(_, cb):
         ]]))
     except: pass
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^qual_"))
 async def quality_callback(_, cb):
     parts = cb.data.split("_")
@@ -822,6 +830,7 @@ async def quality_callback(_, cb):
     msg = await cb.message.reply(f"⬇️ Downloading `{song}` in **{quality}kbps**...")
     await send_song(cb.message, song, msg, quality)
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^vote_"))
 async def vote_callback(_, cb):
     parts = cb.data.split("_")
@@ -834,6 +843,7 @@ async def vote_callback(_, cb):
     group_votes[group_id]["votes"][user_id] = choice
     await cb.answer(f"✅ Voted for option {choice+1}!", show_alert=False)
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^help_(?!back)"))
 async def help_category(_, cb):
     cat = cb.data[5:]
@@ -911,6 +921,7 @@ async def help_category(_, cb):
     await cb.message.edit_text(text, reply_markup=keyboard)
     await cb.answer()
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^help_back$"))
 async def help_back(_, cb):
     keyboard = InlineKeyboardMarkup([
@@ -924,6 +935,7 @@ async def help_back(_, cb):
     await cb.message.edit_text(f"❓ **{BOT_NAME} Help Menu**\n\nChoose a category:", reply_markup=keyboard)
     await cb.answer()
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^none$"))
 async def none_cb(_, cb):
     await cb.answer()
@@ -1289,6 +1301,7 @@ async def rlc(_, m: Message):
         ])
         await m.reply(f"🎛 **Choose version for:** `{query}`", reply_markup=keyboard)
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^rlc_(remix|lofi|cover|acoustic)_"))
 async def rlc_callback(_, cb):
     parts = cb.data.split("_", 2)
@@ -1776,6 +1789,7 @@ async def download(_, m: Message):
                 dm_msg = await app.send_message(user_id, text, reply_markup=InlineKeyboardMarkup(btn_rows))
             except: pass
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^pick_\d+_"))
 async def pick_callback(_, cb):
     parts = cb.data.split("_", 2)
@@ -3400,6 +3414,7 @@ async def send_hook_challenge():
         # Every 3-5 hours randomly
         await asyncio.sleep(random.randint(10800, 18000))
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^hook_guess_"))
 async def hook_guess_callback(_, cb):
     song = cb.data[11:]
@@ -3412,6 +3427,7 @@ async def hook_guess_callback(_, cb):
         f"Or type the song name as your answer below 👇"
     )
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^hook_skip$"))
 async def hook_skip_callback(_, cb):
     await cb.answer("Skipped! Next challenge coming soon 😄", show_alert=True)
@@ -4113,6 +4129,7 @@ def build_menu_text(section, page):
     text += f"\n━━━━━━━━━━━━━━━\n🎧 Powered by BeatNova"
     return text
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^menu_home$"))
 async def menu_home(_, cb):
     bot_username_raw = BOT_USERNAME.replace("@", "")
@@ -4135,6 +4152,7 @@ async def menu_home(_, cb):
     )
     await cb.answer()
 
+@safe_handler
 @app.on_callback_query(filters.regex(r"^menu_(music|discover|games|fun|chat|profile|stats)_(\d+)$"))
 async def menu_page(_, cb):
     parts = cb.data.split("_")
@@ -4145,13 +4163,21 @@ async def menu_page(_, cb):
     await cb.message.edit_text(text, reply_markup=keyboard)
     await cb.answer()
 
+async def _run_safe(name: str, coro):
+    """Safely run background coroutine — log errors without crashing the bot"""
+    try:
+        await coro
+    except Exception as e:
+        print(f"[background:{name}] Error: {type(e).__name__}: {e}")
+
+
 async def main():
     await app.start()
     db.init_db()
     print(f"✅ {BOT_NAME} started!")
-    asyncio.create_task(send_daily_songs())
-    asyncio.create_task(send_micro_tips())
-    asyncio.create_task(send_hook_challenge())
+    asyncio.create_task(_run_safe("send_daily_songs", send_daily_songs()))
+    asyncio.create_task(_run_safe("send_micro_tips", send_micro_tips()))
+    asyncio.create_task(_run_safe("send_hook_challenge", send_hook_challenge()))
     await asyncio.Event().wait()
 
 app.run(main())
