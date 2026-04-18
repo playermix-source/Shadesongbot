@@ -816,17 +816,22 @@ def _ytdlp_download_url(url):
         title = clean.strip(' -|/') or raw_title
         artist = info.get("artist") or info.get("creator") or info.get("uploader", "Unknown")
         duration = int(info.get("duration") or 0)
-        # Find downloaded file
-        safe = "".join(c for c in info.get("title", "song") if c.isalnum() or c in " -_")[:40]
-        local_path = None
-        for fname in os.listdir(tmp_dir):
-            if fname.endswith(".mp3") and os.path.getsize(os.path.join(tmp_dir, fname)) > 10000:
-                local_path = os.path.join(tmp_dir, fname)
-                break
-        if not local_path:
+        # Find the most recently created mp3 in tmp_dir
+        import glob as _glob, time as _time
+        mp3_files = _glob.glob(os.path.join(tmp_dir, "*.mp3"))
+        # Also check other formats
+        for ext in ["m4a", "webm", "opus", "ogg"]:
+            mp3_files += _glob.glob(os.path.join(tmp_dir, f"*.{ext}"))
+        # Get newest file created in last 60 seconds
+        now = _time.time()
+        recent = [f for f in mp3_files if os.path.exists(f) and (now - os.path.getmtime(f)) < 60]
+        recent.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+        local_path = recent[0] if recent else None
+
+        if not local_path or os.path.getsize(local_path) < 10000:
             print("[yt-dlp URL] File not found after download")
             return None
-        print(f"[yt-dlp URL] ✅ {title} ({duration}s)")
+        print(f"[yt-dlp URL] ✅ {title} ({duration}s) → {local_path}")
         return {
             "source": "youtube",
             "name": title,
