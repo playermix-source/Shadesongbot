@@ -799,8 +799,45 @@ def _ytdlp_download(query):
             if duration < 60:
                 print(f"[yt-dlp] Too short ({duration}s): {entry.get('title')}")
                 return None
-            title   = entry.get("title", search_q)
-            artist  = entry.get("artist") or entry.get("creator") or entry.get("uploader", "Unknown")
+            raw_title = entry.get("title", search_q)
+            # Clean YouTube video title → proper song name
+            # e.g. "Afusic - Pal Pal with @Talwiinder (Official Visualiser) Prod. @AliSoomroMusic"
+            # → "Pal Pal"
+            import re as _re
+            clean = raw_title
+            # Remove parentheses/brackets content: (Official Video), [Lyrics], etc.
+            clean = _re.sub(r'\s*[\(\[][^\)\]]{0,60}[\)\]]', '', clean)
+            # Remove @mentions
+            clean = _re.sub(r'\s*@\S+', '', clean)
+            # Remove "Prod. X" / "Produced by X" — do this BEFORE removing "with"
+            clean = _re.sub(r'\s*[Pp]rod(uced by|\.)\s+.*$', '', clean)
+            # Remove "ft.", "feat."
+            clean = _re.sub(r'\s*(ft\.|feat\.?)\s+.*$', '', clean, flags=_re.IGNORECASE)
+            # Remove "with @mention" or "with CapitalizedName"
+            clean = _re.sub(r'\s*\bwith\s+[@A-Z]\S*.*$', '', clean)
+            # Remove pipe and after
+            clean = _re.sub(r'\s*\|.*$', '', clean)
+            # Remove trailing year
+            clean = _re.sub(r'\s+\d{4}$', '', clean)
+            # Split on " - " → take last part (usually song title after artist)
+            parts = [p.strip() for p in clean.split(' - ') if p.strip()]
+            clean = parts[-1] if len(parts) >= 2 else (parts[0] if parts else raw_title)
+            # Remove "Artist: Song" colon prefix
+            if ':' in clean:
+                colon_parts = [p.strip() for p in clean.split(':', 1)]
+                if len(colon_parts[0].split()) <= 3:  # short prefix = likely artist name
+                    clean = colon_parts[1]
+            # Final cleanup
+            clean = clean.strip(' -|/')
+            title = clean if len(clean) >= 2 else raw_title
+
+            # Artist: prefer entry.get("artist"), fallback to uploader cleaned up
+            raw_artist = entry.get("artist") or entry.get("creator") or ""
+            if not raw_artist:
+                uploader = entry.get("uploader", "Unknown")
+                # Clean uploader: remove " - Topic", "VEVO", etc.
+                raw_artist = _re.sub(r'\s*[-–]\s*(Topic|VEVO|Official|Music).*$', '', uploader, flags=_re.IGNORECASE).strip()
+            artist = raw_artist or "Unknown"
             album   = entry.get("album") or title
             year    = str(entry.get("release_year") or (entry.get("upload_date") or "")[:4] or "Unknown")
             vid_id  = entry.get("id", "")
