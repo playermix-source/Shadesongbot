@@ -1681,34 +1681,45 @@ async def download(_, m: Message):
             else:
                 return
         raw = await asyncio.to_thread(apis._ytdlp_download_url, yt_url)
-        if not raw or not raw.get("_local_path"):
-            await msg.edit("❌ YouTube se download nahi hua. Link check karo!")
+        if not raw or not raw.get("_local_path") or not os.path.exists(raw.get("_local_path", "")):
+            await msg.edit("❌ YouTube se download nahi hua. Link check karo!\n\n💡 Tip: youtu.be short links bhi kaam karte hain.")
             return
-        await send_song(m, raw.get("name", query), msg,
-                       _user_id=user_id, _first_name=first_name)
-        # Note: send_song will re-search — instead directly use raw result
-        # Direct send for URL downloads
-        local_path = raw.get("_local_path")
-        if local_path and os.path.exists(local_path):
-            title = raw.get("name", "Unknown")
-            artist = raw.get("artist", "Unknown")
-            duration = int(raw.get("duration", 0))
-            mins, secs = duration // 60, duration % 60
-            try:
-                await app.send_audio(
-                    m.chat.id, local_path,
-                    caption=(f"🎵 **{title}**\n"
-                             f"👤 {artist}\n"
-                             f"⏱ {mins}:{secs:02d} | 🎧 192kbps\n"
-                             f"━━━━━━━━━━━━━━━\n🎧 Powered by BeatNova"),
-                    title=title, performer=artist, duration=duration
-                )
-                await msg.delete()
-            except Exception:
-                await msg.edit("❌ Send nahi hua. Try again!")
-            finally:
-                try: os.remove(local_path)
-                except: pass
+        # Directly send — don't go through send_song (it would re-search JioSaavn)
+        local_path = raw["_local_path"]
+        title = raw.get("name", "Unknown")
+        artist = raw.get("artist", "Unknown")
+        duration = int(raw.get("duration", 0))
+        mins, secs = duration // 60, duration % 60
+        try:
+            await msg.edit("📤 **Sending...**")
+            await app.send_audio(
+                m.chat.id, local_path,
+                caption=(f"🎵 **{title}**\n"
+                         f"👤 {artist}\n"
+                         f"⏱ {mins}:{secs:02d} | 🎧 192kbps\n"
+                         f"━━━━━━━━━━━━━━━\n🎧 Powered by BeatNova"),
+                title=title, performer=artist, duration=duration
+            )
+            await msg.delete()
+            # Update stats
+            if user_id:
+                db.ensure_user(user_id, first_name)
+                db.increment_downloads(user_id)
+                db.add_history(user_id, title)
+        except Exception as ex:
+            err = str(ex)
+            if "SLOWMODE_WAIT" in err and user_id:
+                try:
+                    await app.send_audio(user_id, local_path,
+                        caption=f"🎵 **{title}**\n👤 {artist}\n⏱ {mins}:{secs:02d}\n🎧 Powered by BeatNova",
+                        title=title, performer=artist, duration=duration)
+                    await msg.edit(f"✅ DM mein bhej diya!")
+                except Exception: await msg.edit("❌ Send nahi hua.")
+            else:
+                await msg.edit(f"❌ Send nahi hua: `{err[:60]}`")
+        finally:
+            try: os.remove(local_path)
+            except: pass
         return
     # ─────────────────────────────────────────────────────────────────────────
 
