@@ -12,18 +12,25 @@ LASTFM_KEY = "c9b16bfc1f90c14d1e3b20a5d7c2fead"
 
 # Words that indicate unwanted versions — penalize these in search results
 PENALTY_WORDS = [
-    "2.0", "3.0", "4.0", "v2", "v3", "v4", "ii", "iii", "iv",
-    "remix", "remixed", "re-mix", "mashup", "mash-up", "bootleg",
-    "reprise", "remastered", "remaster", "redux", "rework", "reworked",
-    "version", "edit", "edited", "mix",
+    # Version numbers
+    "2.0", "3.0", "4.0", "v2", "v3", "v4",
+    # Remixes/edits
+    "remix", "remixed", "re-mix", "bootleg", "redux", "rework", "reworked",
+    "edit", "edited",
+    # Covers/recreations
     "cover", "covered", "tribute", "recreated", "recreation",
-    "extended", "radio", "acoustic", "unplugged",
-    "instrumental", "karaoke", "lofi", "lo-fi", "slowed", "reverb",
-    "ft", "feat", "featuring",
+    # Degraded versions
+    "karaoke", "lofi", "lo-fi", "slowed", "reverb",
+    # Live/session (usually not original studio)
     "live", "concert", "session", "performance", "tour",
-    "official", "lyric", "video", "audio",
-    "soundtrack", "ost", "bgm",
+    # Promos
+    "promo", "snippet",
 ]
+# NOTE: Removed from penalty: "acoustic", "unplugged", "instrumental", "mashup",
+# "ft", "feat", "official", "lyric", "video", "audio", "version", "mix",
+# "remastered", "extended", "radio", "soundtrack", "ost", "bgm"
+# Reason: Many ORIGINAL songs have these words — penalizing them causes wrong results
+# e.g. "Jhol x Anurag Khalid" (original), "Acoustic" versions are sometimes the only version
 
 # Artist aliases — many songs have multiple artists, user types one but JioSaavn indexes by another
 # Format: "what user types" -> ["what JioSaavn uses", ...]
