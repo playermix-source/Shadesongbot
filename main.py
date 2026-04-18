@@ -1645,8 +1645,6 @@ def _is_valid_result(song):
 
     return True
 
-    return True
-
 def _dedup_by_artist(results):
     """One result per artist — if same artist appears multiple times keep longest"""
     artist_best = {}
@@ -1661,12 +1659,57 @@ def _dedup_by_artist(results):
 async def download(_, m: Message):
     parts = m.text.split(None, 1)
     if len(parts) < 2 or not parts[1].strip() or parts[1].strip().lower() in PLACEHOLDERS:
-        await m.reply("❌ Example: `/download Tum Hi Ho`")
+        await m.reply("❌ Example: `/download Tum Hi Ho`\nYa YouTube link: `/download https://youtube.com/...`")
         return
     query = parts[1].strip()
     is_group = m.chat.type.name in ("GROUP", "SUPERGROUP")
     first_name = get_user_name(m) if m.from_user else "User"
     user_id = m.from_user.id if m.from_user else None
+
+    # ── YouTube / YouTube Music direct URL download ──────────────────────────
+    yt_url_pattern = r'(https?://)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com)[\w/?=&%-]+'
+    if re.search(yt_url_pattern, query):
+        yt_url = re.search(yt_url_pattern, query).group(0)
+        if not yt_url.startswith('http'):
+            yt_url = 'https://' + yt_url
+        try:
+            msg = await m.reply(f"🎵 **YouTube se download ho raha hai...**")
+        except Exception as e:
+            if "SLOWMODE_WAIT" in str(e) and user_id:
+                msg = await app.send_message(user_id, "🎵 **YouTube se download ho raha hai...**")
+            else:
+                return
+        raw = await asyncio.to_thread(apis._ytdlp_download_url, yt_url)
+        if not raw or not raw.get("_local_path"):
+            await msg.edit("❌ YouTube se download nahi hua. Link check karo!")
+            return
+        await send_song(m, raw.get("name", query), msg,
+                       _user_id=user_id, _first_name=first_name)
+        # Note: send_song will re-search — instead directly use raw result
+        # Direct send for URL downloads
+        local_path = raw.get("_local_path")
+        if local_path and os.path.exists(local_path):
+            title = raw.get("name", "Unknown")
+            artist = raw.get("artist", "Unknown")
+            duration = int(raw.get("duration", 0))
+            mins, secs = duration // 60, duration % 60
+            try:
+                await app.send_audio(
+                    m.chat.id, local_path,
+                    caption=(f"🎵 **{title}**\n"
+                             f"👤 {artist}\n"
+                             f"⏱ {mins}:{secs:02d} | 🎧 192kbps\n"
+                             f"━━━━━━━━━━━━━━━\n🎧 Powered by BeatNova"),
+                    title=title, performer=artist, duration=duration
+                )
+                await msg.delete()
+            except Exception:
+                await msg.edit("❌ Send nahi hua. Try again!")
+            finally:
+                try: os.remove(local_path)
+                except: pass
+        return
+    # ─────────────────────────────────────────────────────────────────────────
 
     # In group with slowmode: skip the "Searching..." reply in group, go straight to DM
     try:
