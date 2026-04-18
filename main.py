@@ -359,42 +359,52 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
         await msg.edit("❌ Song not found! Try a different name.")
         return
 
-    # Validate result matches query title — reject clearly wrong songs
-    # e.g. "pal pal afusic" → "Pal Pal X Haseen" = WRONG (extra words after title)
-    # e.g. "pal pal talwiinder" → "Pal" = WRONG (too few words)
-    result_name_words = raw.get("name", "").lower().strip().split()
+    # Smart validation: if user specified artist in query, result must match that artist
     from collections import Counter
-    # Detect artist words in query (words that appear in known aliases or are not title words)
-    query_words_all = query.lower().split()
-    # Title words = first N words that are likely song title (not artist)
-    # Heuristic: if query has repeated words, those are title (e.g. "pal pal")
-    q_counts = Counter(query_words_all)
-    repeated_title_words = [w for w in query_words_all if q_counts[w] > 1]
+    query_lower = query.lower().strip()
+    query_words = query_lower.split()
+    result_name = raw.get("name", "").lower().strip()
+    result_artist = raw.get("primaryArtists", raw.get("artist", "")).lower()
 
-    title_mismatch = False
-    if repeated_title_words:
-        # Query has repeated words like "pal pal" — result must also have them same count
-        for w in set(repeated_title_words):
-            if result_name_words.count(w) < q_counts[w]:
-                title_mismatch = True
+    # Detect if query contains artist words (words NOT in result name but in query)
+    result_name_words = set(result_name.split())
+    # Artist words = query words that don't appear in the result name
+    # e.g. "pal pal talwiinder" → "pal","pal" in result → "talwiinder" is artist word
+    potential_artist_words = [w for w in query_words if w not in result_name_words and len(w) > 2]
+
+    wrong_song = False
+    if potential_artist_words:
+        # User typed artist name — check if result artist matches (or alias)
+        artist_matched = False
+        for aw in potential_artist_words:
+            # Check direct match
+            if aw in result_artist:
+                artist_matched = True
                 break
-        # Also check result doesn't have extra unrelated words making it a different song
-        # "Pal Pal X Haseen" has "x" and "haseen" not in query → penalty words check
-        result_core = " ".join(result_name_words[:len(repeated_title_words)])
-        if result_core != " ".join(repeated_title_words):
-            title_mismatch = True
+            # Check aliases
+            aliases = apis.ARTIST_ALIASES.get(aw, [])
+            for alias in aliases:
+                if any(a in result_artist for a in alias.split()):
+                    artist_matched = True
+                    break
+            if artist_matched:
+                break
+        if not artist_matched:
+            wrong_song = True
+            print(f"[send_song] ❌ Artist mismatch: wanted artist from '{potential_artist_words}' got '{result_artist}'")
 
-    if title_mismatch:
-        print(f"[send_song] ❌ Mismatch: query='{query}' got='{raw.get('name')}' — trying yt-dlp")
+    if wrong_song:
+        print(f"[send_song] Trying yt-dlp for: {query}")
         yt_raw2 = await asyncio.to_thread(apis._ytdlp_download, query)
         if yt_raw2 and int(yt_raw2.get("duration", 0)) >= 90:
             raw = yt_raw2
             local_path = raw.get("_local_path")
+            print(f"[send_song] ✅ yt-dlp: {raw.get('name')} ({raw.get('duration')}s)")
         else:
+            print(f"[send_song] yt-dlp also failed for: {query}")
             await msg.edit(
-                f"❌ **Song not found** for `{query}`.\n\n"
-                f"💡 This song may only be on YouTube — not available on JioSaavn.\n"
-                f"Try a different song or check the artist name."
+                f"❌ **'{query}'** not found on JioSaavn.\n\n"
+                f"This song may only be on YouTube. Try searching with full artist name."
             )
             return
 
