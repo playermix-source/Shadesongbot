@@ -11,6 +11,15 @@ import apis
 
 app = Client("beatnova_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
+# Cleanup old temp files on startup
+import glob as _glob, shutil as _shutil
+_tmp_dir = "/tmp/beatnova_dl"
+if os.path.exists(_tmp_dir):
+    old_files = _glob.glob(f"{_tmp_dir}/*")
+    if old_files:
+        _shutil.rmtree(_tmp_dir, ignore_errors=True)
+        print(f"[startup] Cleaned {len(old_files)} old temp files")
+
 BOT_NAME = "BeatNova"
 BOT_USERNAME = "@SHADE_SONG_BOT"
 DEVELOPER = "@ZeroShader"
