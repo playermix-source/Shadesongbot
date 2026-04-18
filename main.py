@@ -1354,6 +1354,7 @@ async def badges(_, m: Message):
     await m.reply(text)
 
 @safe_handler
+@safe_handler
 @app.on_message(filters.command("batch"))
 async def batch(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1364,14 +1365,17 @@ async def batch(_, m: Message):
     if not songs:
         await m.reply("❌ Song names likho!")
         return
+    user_id = m.from_user.id
+    first_name = get_user_name(m)
     await m.reply(f"📦 **Downloading {len(songs)} songs...**\n⚠️ Wait karo!")
     for i, song in enumerate(songs, 1):
         try:
             msg = await m.reply(f"⬇️ **{i}/{len(songs)}:** `{song}`...")
-            await send_song(m, song, msg)
-            await asyncio.sleep(2)
-        except:
-            await m.reply(f"❌ **{song}** failed!")
+            await send_song(m, song, msg, _user_id=user_id, _first_name=first_name)
+            await asyncio.sleep(3)
+        except Exception as e:
+            if "SLOWMODE_WAIT" not in str(e):
+                await m.reply(f"❌ **{song}** failed!")
 
 
 @safe_handler
@@ -1594,30 +1598,31 @@ async def discography(_, m: Message):
 # Words that mean a song is a cover/remake — filter from download results
 _COVER_SIGNALS_NAME = [
     "cover", "tribute", "recreat", "remake", "karaoke",
-    "instrumental", "sing along", "sing-along", "lofi", "lo-fi",
-    "slowed", "reverb", "unplugged version", "backing track",
-    # Mashup/crossover patterns
-    " x ", " X ", " vs ", " vs. ",
+    "instrumental", "sing along", "sing-along",
+    "slowed", "reverb", "backing track",
     "mashup", "medley", "jukebox",
-    # Version tags
     "trending version", "viral version", "reels version",
     "short version", "clip version", "promo",
 ]
 
+# NOTE: "acoustic", "unplugged", "sad version", "lofi", "x " removed from hard filter
+# These are penalized in scoring but NOT hard-blocked (some are original versions)
+# "Jhol x Anurag Khalid" is the ORIGINAL song name — x should never hard-block
+
 _COVER_SIGNALS_ARTIST = [
-    "afusic", "anukriti", "karaoke", "sing along",
-    "recreated", "tribute", "cover", "unplugged",
+    "karaoke", "sing along",
+    "recreated by", "tribute band", "cover artist",
 ]
+# NOTE: Never add real artist names here (afusic, anukriti etc are real artists)
 
 def _is_valid_result(song):
-    """Filter: remove short clips, unknown artists, covers, mashups, wrong versions"""
+    """Filter: remove only clearly invalid results — short clips, blank artists, karaoke"""
     import re as _re
     name = song.get("name", "").lower()
     artist = song.get("primaryArtists", song.get("artist", "")).lower().strip()
     duration = int(song.get("duration", 0))
 
-    # duration=0 means YouTube source (duration not yet known) — always allow
-    # Only reject if we KNOW it's a short clip (1-55s)
+    # Only reject if we KNOW it's a very short clip (under 55s)
     if 0 < duration < 55:
         return False
 
@@ -1625,23 +1630,20 @@ def _is_valid_result(song):
     if not artist or artist in ("unknown", "various artists", ""):
         return False
 
-    # Remove version number songs like "Song 2.0", "Song 3.0" — almost always unwanted
-    if _re.search(r'\b\d+\.\d+\b', name):
-        return False
-
-    # Remove if name has cover/mashup/version signals
+    # Remove hard cover/karaoke signals
     for sig in _COVER_SIGNALS_NAME:
         if sig in name:
             return False
 
-    # Remove known cover/tribute artists
     for sig in _COVER_SIGNALS_ARTIST:
         if sig in artist:
             return False
 
-    # Remove remix patterns: "Song Name - Remix", "Song (DJ Mix)"
-    if _re.search(r'[\(\[](remix|mix|edit|dj|remaster|remastered|version|ver\.)[\)\]]', name):
+    # Remove bracket remix patterns
+    if _re.search(r'[\(\[](remix|mix|edit|dj|remaster|remastered)[\)\]]', name):
         return False
+
+    return True
 
     return True
 
