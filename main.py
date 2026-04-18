@@ -30,6 +30,46 @@ CHAT_DAILY_LIMIT = 15
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+
+# ── Safe helpers ──────────────────────────────────────────────────────────────
+
+def get_user_id(m) -> int | None:
+    """Safely get user id — returns None for anonymous/channel messages"""
+    return m.from_user.id if m.from_user else None
+
+def get_user_name(m, fallback: str = "User") -> str:
+    """Safely get first name"""
+    return (get_user_name(m) or fallback) if m.from_user else fallback
+
+def safe_handler(func):
+    """
+    Decorator for all message handlers:
+    1. Skips anonymous / channel messages (m.from_user is None)
+    2. Catches SlowmodeWait silently — no crash, no log spam
+    3. Catches all other exceptions and logs them without crashing the bot
+    """
+    import functools
+    @functools.wraps(func)
+    async def wrapper(client, m: Message):
+        # Skip anonymous messages (channels, linked posts, etc.)
+        if not m.from_user:
+            return
+        try:
+            await func(client, m)
+        except Exception as e:
+            err = str(e)
+            if "SLOWMODE_WAIT" in err or "SlowmodeWait" in err:
+                # Group slowmode — silently ignore, download handler has its own DM logic
+                return
+            print(f"[{func.__name__}] Error: {type(e).__name__}: {err[:120]}")
+            try:
+                await m.reply("⚠️ Something went wrong. Please try again!")
+            except Exception:
+                pass
+    return wrapper
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 BEATNOVA_SYSTEM_PROMPT = """Tu BeatNova hai — ek music-loving AI dost jo Hinglish mein baat karta hai.
 
 Rules:
@@ -439,7 +479,7 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
     mins, secs = duration // 60, duration % 60
 
     user_id = _user_id or (m.from_user.id if m.from_user else None)
-    first_name = _first_name or (m.from_user.first_name if m.from_user else "User")
+    first_name = _first_name or (get_user_name(m) if m.from_user else "User")
     if not user_id:
         await msg.edit("❌ Could not identify user. Please try again.")
         return
@@ -889,6 +929,7 @@ async def none_cb(_, cb):
 # A
 
 
+@safe_handler
 @app.on_message(filters.command("activestats"))
 async def activestats(_, m: Message):
     users = db.get_all_users()
@@ -902,6 +943,7 @@ async def activestats(_, m: Message):
     await m.reply(text)
 
 
+@safe_handler
 @app.on_message(filters.command("ai_playlist"))
 async def ai_playlist(_, m: Message):
     parts = m.text.split(None, 1)
@@ -932,6 +974,7 @@ async def ai_playlist(_, m: Message):
 
 
 
+@safe_handler
 @app.on_message(filters.command("artistquiz"))
 async def artistquiz(_, m: Message):
     msg = await m.reply("🎤 **Preparing Artist Quiz...**")
@@ -990,6 +1033,7 @@ async def artistquiz(_, m: Message):
 
 # A — MERGED COMMANDS
 
+@safe_handler
 @app.on_message(filters.command("artist"))
 async def artist(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1023,6 +1067,7 @@ async def artist(_, m: Message):
     except Exception as e:
         await msg.edit(f"❌ Could not fetch! Try again.")
 
+@safe_handler
 @app.on_message(filters.command("album"))
 async def album(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1051,6 +1096,7 @@ async def album(_, m: Message):
     text += "\n📥 `/download [song name]`"
     await msg.edit(text)
 
+@safe_handler
 @app.on_message(filters.command("lang"))
 async def lang_cmd(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1077,6 +1123,7 @@ async def lang_cmd(_, m: Message):
     text += "\n📥 `/download [song name]`"
     await msg.edit(text)
 
+@safe_handler
 @app.on_message(filters.command("srec"))
 async def srec(_, m: Message):
     """Similar songs + Recommendations merged"""
@@ -1173,6 +1220,7 @@ async def srec(_, m: Message):
     except Exception as e:
         await msg.edit("❌ Could not fetch! Try again.")
 
+@safe_handler
 @app.on_message(filters.command("rlc"))
 async def rlc(_, m: Message):
     """Remix / Lofi / Cover merged"""
@@ -1270,16 +1318,17 @@ async def rlc_callback(_, cb):
 
 # B
 
+@safe_handler
 @app.on_message(filters.command("badges"))
 async def badges(_, m: Message):
     user_id = m.from_user.id
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, get_user_name(m))
     user = db.get_user(user_id) or {}
     downloads = user.get("downloads", 0)
     xp = user.get("xp", 0)
     level = user.get("level", 1)
     badge_list = get_badges(user_id)
-    text = (f"🏅 **{m.from_user.first_name}'s Badges:**\n\n")
+    text = (f"🏅 **{get_user_name(m)}'s Badges:**\n\n")
     for b in badge_list:
         text += f"• {b}\n"
     text += (f"\n📥 Downloads: {downloads}\n"
@@ -1287,6 +1336,7 @@ async def badges(_, m: Message):
              f"🎖 Level: {level} — {get_level_title(level)}")
     await m.reply(text)
 
+@safe_handler
 @app.on_message(filters.command("batch"))
 async def batch(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1307,6 +1357,7 @@ async def batch(_, m: Message):
             await m.reply(f"❌ **{song}** failed!")
 
 
+@safe_handler
 @app.on_message(filters.command(["chat", "c"]))
 async def chat_cmd(_, m: Message):
     if not GROQ_API_KEY:
@@ -1377,6 +1428,7 @@ async def chat_cmd(_, m: Message):
         print(f"[GROQ EXCEPTION] {e}")
         await msg.edit(f"❌ Error: `{str(e)[:80]}`\nDobara try karo!")
 
+@safe_handler
 @app.on_message(filters.command("clearchat"))
 async def clearchat(_, m: Message):
     user_id = m.from_user.id
@@ -1384,6 +1436,7 @@ async def clearchat(_, m: Message):
     await m.reply("🗑 **Chat history cleared!**\nStart fresh with `/chat`!")
 
 
+@safe_handler
 @app.on_message(filters.command("challenge"))
 async def challenge(_, m: Message):
     now = datetime.datetime.now()
@@ -1410,6 +1463,7 @@ async def challenge(_, m: Message):
         del active_quiz[chat_id]
         await m.reply(f"⏱ **Time's up!**\nAnswer: **{title}** by {artist}")
 
+@safe_handler
 @app.on_message(filters.command("compare"))
 async def compare(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1439,6 +1493,7 @@ async def compare(_, m: Message):
     )
 
 
+@safe_handler
 @app.on_message(filters.command("daily"))
 async def daily(_, m: Message):
     now = datetime.datetime.now()
@@ -1456,6 +1511,7 @@ async def daily(_, m: Message):
     random.seed()
     await send_song(m, song["name"], msg)
 
+@safe_handler
 @app.on_message(filters.command("dailygroup"))
 async def dailygroup(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -1469,10 +1525,11 @@ async def dailygroup(_, m: Message):
     else:
         await m.reply("🔕 **Daily Group Song: OFF**")
 
+@safe_handler
 @app.on_message(filters.command("dailyreward"))
 async def dailyreward(_, m: Message):
     user_id = m.from_user.id
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, get_user_name(m))
     if not db.can_claim_reward(user_id):
         await m.reply("⏰ **Already claimed today!**\nAao kal phir! 🌅\n\nXP earn karne ke liye songs download karo!")
         return
@@ -1490,6 +1547,7 @@ async def dailyreward(_, m: Message):
         f"Kal phir aao double reward ke liye! 🌟"
     )
 
+@safe_handler
 @app.on_message(filters.command("discography"))
 async def discography(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1588,7 +1646,7 @@ async def download(_, m: Message):
         return
     query = parts[1].strip()
     is_group = m.chat.type.name in ("GROUP", "SUPERGROUP")
-    first_name = m.from_user.first_name if m.from_user else "User"
+    first_name = get_user_name(m) if m.from_user else "User"
     user_id = m.from_user.id if m.from_user else None
 
     # In group with slowmode: skip the "Searching..." reply in group, go straight to DM
@@ -1781,6 +1839,7 @@ async def pick_callback(_, cb):
         except Exception as e:
             print(f"[pick_callback private] {e}")
 
+@safe_handler
 @app.on_message(filters.command("duet"))
 async def duet(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1801,11 +1860,13 @@ async def duet(_, m: Message):
 
 # E
 
+@safe_handler
 @app.on_message(filters.command("easteregg"))
 async def easteregg(_, m: Message):
     await m.reply(random.choice(EASTER_EGGS))
 
 
+@safe_handler
 @app.on_message(filters.command("favorites"))
 async def show_favorites(_, m: Message):
     user_id = m.from_user.id
@@ -1820,6 +1881,7 @@ async def show_favorites(_, m: Message):
     await m.reply(text)
 
 
+@safe_handler
 @app.on_message(filters.command("findlyrics"))
 async def findlyrics(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1848,6 +1910,7 @@ async def findlyrics(_, m: Message):
 
 # G
 
+@safe_handler
 @app.on_message(filters.command("genre"))
 async def genre(_, m: Message):
     parts = m.text.split(None, 1)
@@ -1872,6 +1935,7 @@ async def genre(_, m: Message):
     text += "\n📥 `/download [song name]`"
     await msg.edit(text)
 
+@safe_handler
 @app.on_message(filters.command("genrestats"))
 async def genrestats(_, m: Message):
     user_id = m.from_user.id
@@ -1885,11 +1949,12 @@ async def genrestats(_, m: Message):
     punjabi = sum(1 for s in songs if any(w in s.lower() for w in ["punjabi","jatt","kudi","yaar"]))
     other = max(0, total - hindi - english - punjabi)
     def pct(n): return f"{(n/total*100):.0f}%" if total > 0 else "0%"
-    await m.reply(f"📊 **{m.from_user.first_name}'s Genre Breakdown:**\n\n"
+    await m.reply(f"📊 **{get_user_name(m)}'s Genre Breakdown:**\n\n"
                   f"🇮🇳 Hindi: {hindi} ({pct(hindi)})\n🌍 English: {english} ({pct(english)})\n"
                   f"🎵 Punjabi: {punjabi} ({pct(punjabi)})\n🎶 Other: {other} ({pct(other)})\n\n"
                   f"📥 Total: {total}")
 
+@safe_handler
 @app.on_message(filters.command("gleaderboard"))
 async def gleaderboard(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -1906,6 +1971,7 @@ async def gleaderboard(_, m: Message):
     text += "\n🎵 Download songs to climb up!"
     await m.reply(text)
 
+@safe_handler
 @app.on_message(filters.command("groupmood"))
 async def groupmood(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -1922,6 +1988,7 @@ async def groupmood(_, m: Message):
     await m.reply(f"🎭 **Group Mood Poll!**\n\nSabka mood kya hai?\nBot best playlist suggest karega!\n\n"
                   f"Vote karo neeche 👇", reply_markup=keyboard)
 
+@safe_handler
 @app.on_message(filters.command("groupquiz"))
 async def groupquiz(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -2008,6 +2075,7 @@ async def groupquiz(_, m: Message):
             del active_quiz[chat_id]
             await m.reply(f"⏱ **Time's up! Kisi ne sahi jawab nahi diya!**\n🎵 Answer: **{title}**\n👤 {artist}")
 
+@safe_handler
 @app.on_message(filters.command("groupstats"))
 async def groupstats(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -2024,6 +2092,7 @@ async def groupstats(_, m: Message):
                   f"🥇 Top User: {top_name}\n\n"
                   f"🏆 `/gleaderboard` — See full ranking")
 
+@safe_handler
 @app.on_message(filters.command("guesssong"))
 async def guesssong(_, m: Message):
     msg = await m.reply("🎯 **Fetching quiz song...**")
@@ -2084,6 +2153,7 @@ async def guesssong(_, m: Message):
 
 # H
 
+@safe_handler
 @app.on_message(filters.command("help"))
 async def help_cmd(_, m: Message):
     _bot_raw = BOT_USERNAME.replace("@", "")
@@ -2106,6 +2176,7 @@ async def help_cmd(_, m: Message):
     )
 
 
+@safe_handler
 @app.on_message(filters.command("history"))
 async def show_history(_, m: Message):
     user_id = m.from_user.id
@@ -2120,6 +2191,7 @@ async def show_history(_, m: Message):
 
 # I
 
+@safe_handler
 @app.on_message(filters.command("info"))
 async def song_info(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2147,10 +2219,11 @@ async def song_info(_, m: Message):
                    f"⭐ **Rating:** {avg_rating:.1f}/5 ({vote_count} votes)\n\n"
                    f"📥 `/download {song_data['name']}`")
 
+@safe_handler
 @app.on_message(filters.command("invite"))
 async def invite(_, m: Message):
     user_id = m.from_user.id
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, get_user_name(m))
     await m.reply(f"🤝 **Invite Friends to {BOT_NAME}!**\n\n"
                   f"Share this bot:\n👉 {BOT_USERNAME}\n\n"
                   f"_Share the music, spread the love!_ 🎵")
@@ -2158,6 +2231,7 @@ async def invite(_, m: Message):
 # K
 
 
+@safe_handler
 @app.on_message(filters.command("lastdownload"))
 async def lastdownload(_, m: Message):
     s = db.get_last_downloaded(m.from_user.id)
@@ -2166,6 +2240,7 @@ async def lastdownload(_, m: Message):
         return
     await m.reply(f"🎵 **Last Downloaded:**\n\n🎶 **{s['title']}**\n⏱ {s['duration']} | 👤 {s['by_name']}\n\n📥 `/download {s['title']}`")
 
+@safe_handler
 @app.on_message(filters.command("leaderboard"))
 async def leaderboard(_, m: Message):
     users = db.get_all_users()
@@ -2183,6 +2258,7 @@ async def leaderboard(_, m: Message):
 
 
 
+@safe_handler
 @app.on_message(filters.command("lyrics"))
 async def lyrics(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2208,6 +2284,7 @@ async def lyrics(_, m: Message):
 
 # M
 
+@safe_handler
 @app.on_message(filters.command("mood"))
 async def mood(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2270,10 +2347,12 @@ async def mood(_, m: Message):
         await msg.edit("❌ Could not fetch! Try again.")
         print(f"[mood] {e}")
 
+@safe_handler
 @app.on_message(filters.command("musicfact"))
 async def musicfact(_, m: Message):
     await m.reply(f"🎵 **Music Fact:**\n\n{random.choice(MUSIC_FACTS)}")
 
+@safe_handler
 @app.on_message(filters.command("musicmatch"))
 async def musicmatch(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -2282,6 +2361,7 @@ async def musicmatch(_, m: Message):
     await m.reply("🎵 **Music Match!**\n\nDono users ke downloads compare ho rahe hain...\n\n"
                   "_(Feature coming soon — abhi apni history `/history` mein dekho!)_ 🎵")
 
+@safe_handler
 @app.on_message(filters.command("musicquiz"))
 async def musicquiz(_, m: Message):
     msg = await m.reply("🎮 **Preparing Music Quiz...**")
@@ -2395,18 +2475,19 @@ async def musicquiz(_, m: Message):
         del active_quiz[chat_id]
         await m.reply(f"⏱ **Time's up!**\nAnswer: **{answer_display}**")
 
+@safe_handler
 @app.on_message(filters.command("mystats"))
 async def mystats(_, m: Message):
     user_id = m.from_user.id
     user = db.get_user(user_id)
     if not user or user["downloads"] == 0:
-        await m.reply(f"👤 **{m.from_user.first_name}'s Stats:**\n\n📥 Downloads: 0\n\n💡 **Get started:**\n📥 `/download Tum Hi Ho`\n🎮 `/wordle` — Play a quick game!")
+        await m.reply(f"👤 **{get_user_name(m)}'s Stats:**\n\n📥 Downloads: 0\n\n💡 **Get started:**\n📥 `/download Tum Hi Ho`\n🎮 `/wordle` — Play a quick game!")
         return
     songs = db.get_history(user_id, 50)
     most = max(set(songs), key=songs.count) if songs else "None"
     xp = user.get("xp", 0)
     level = user.get("level", 1)
-    await m.reply(f"👤 **{m.from_user.first_name}'s Stats:**\n\n"
+    await m.reply(f"👤 **{get_user_name(m)}'s Stats:**\n\n"
                   f"📥 Downloads: {user['downloads']}\n"
                   f"🎵 Most Downloaded: {most}\n"
                   f"📜 History: {len(db.get_history(user_id))}\n"
@@ -2417,6 +2498,7 @@ async def mystats(_, m: Message):
                   f"🎸 Genre: {get_user_genre_from_history(user_id)}\n"
                   f"🏅 Rank: {get_level(user['downloads'])}")
 
+@safe_handler
 @app.on_message(filters.command("mywishlist"))
 async def mywishlist(_, m: Message):
     items = db.get_wishlist(m.from_user.id)
@@ -2431,6 +2513,7 @@ async def mywishlist(_, m: Message):
 
 # N
 
+@safe_handler
 @app.on_message(filters.command("newreleases"))
 async def newreleases(_, m: Message):
     msg = await m.reply("🆕 **Fetching latest releases...**")
@@ -2473,6 +2556,7 @@ async def newreleases(_, m: Message):
         print(f"[newreleases] {e}")
 
 
+@safe_handler
 @app.on_message(filters.command("note"))
 async def note(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2487,6 +2571,7 @@ async def note(_, m: Message):
 
 
 
+@safe_handler
 @app.on_message(filters.command("ping"))
 async def ping(_, m: Message):
     start = datetime.datetime.now()
@@ -2496,6 +2581,7 @@ async def ping(_, m: Message):
 
 
 
+@safe_handler
 @app.on_message(filters.command("playlist"))
 async def playlist(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2518,10 +2604,11 @@ async def playlist(_, m: Message):
         except: pass
 
 
+@safe_handler
 @app.on_message(filters.command("profile"))
 async def profile(_, m: Message):
     user_id = m.from_user.id
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, get_user_name(m))
     user = db.get_user(user_id)
     downloads = user["downloads"]
     xp = user.get("xp", 0)
@@ -2529,7 +2616,7 @@ async def profile(_, m: Message):
     songs = db.get_history(user_id, 50)
     most = max(set(songs), key=songs.count) if songs else "None"
     badge_list = get_badges(user_id)
-    await m.reply(f"👤 **{m.from_user.first_name}'s Profile**\n\n"
+    await m.reply(f"👤 **{get_user_name(m)}'s Profile**\n\n"
                   f"📅 Since: {user.get('joined', 'Unknown')}\n"
                   f"📥 Downloads: {downloads}\n"
                   f"🎵 Top Song: {most}\n"
@@ -2543,6 +2630,7 @@ async def profile(_, m: Message):
                   f"**Badges:**\n" + "\n".join(f"• {b}" for b in badge_list))
 
 
+@safe_handler
 @app.on_message(filters.command("quality"))
 async def quality_select(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2557,6 +2645,7 @@ async def quality_select(_, m: Message):
     ]])
     await m.reply(f"🎧 **Select Quality:**\n`{song}`\n\n128kbps — Data saver 📶\n192kbps — Balanced ⚖️\n320kbps — Best quality 🎵", reply_markup=keyboard)
 
+@safe_handler
 @app.on_message(filters.command("quote"))
 async def quote(_, m: Message):
     msg = await m.reply("💬 **Fetching quote...**")
@@ -2564,6 +2653,7 @@ async def quote(_, m: Message):
 
 # R
 
+@safe_handler
 @app.on_message(filters.command("random"))
 async def random_song(_, m: Message):
     keywords = [
@@ -2585,6 +2675,7 @@ async def random_song(_, m: Message):
         await msg.edit("❌ Could not fetch! Try again.")
         print(f"[random] {e}")
 
+@safe_handler
 @app.on_message(filters.command("rate"))
 async def rate(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2602,6 +2693,7 @@ async def rate(_, m: Message):
     await m.reply(f"⭐ **Rate:** `{song}`", reply_markup=keyboard)
 
 
+@safe_handler
 @app.on_message(filters.command("regional"))
 async def regional(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2622,6 +2714,7 @@ async def regional(_, m: Message):
     await msg.edit(text)
 
 
+@safe_handler
 @app.on_message(filters.command("removefav"))
 async def removefav(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2633,6 +2726,7 @@ async def removefav(_, m: Message):
     else:
         await m.reply("❌ Not in favorites!")
 
+@safe_handler
 @app.on_message(filters.command("requestsong"))
 async def requestsong(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -2643,10 +2737,11 @@ async def requestsong(_, m: Message):
         await m.reply("❌ Example: `/requestsong Tum Hi Ho`")
         return
     song = parts[1].strip()
-    await m.reply(f"🎵 **Song Request!**\n\n🎶 `{song}`\n👤 Requested by: **{m.from_user.first_name}**\n\n📥 `/download {song}` to download!")
+    await m.reply(f"🎵 **Song Request!**\n\n🎶 `{song}`\n👤 Requested by: **{get_user_name(m)}**\n\n📥 `/download {song}` to download!")
 
 # S
 
+@safe_handler
 @app.on_message(filters.command("save"))
 async def save(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2655,7 +2750,7 @@ async def save(_, m: Message):
         return
     query = parts[1].strip()
     user_id = m.from_user.id
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, get_user_name(m))
     if db.is_favorite(user_id, query):
         await m.reply("⭐ Already in favorites!")
         return
@@ -2666,6 +2761,7 @@ async def save(_, m: Message):
     db.increment_song_favorites(query)
     await m.reply(f"⭐ **Saved:** `{query}`")
 
+@safe_handler
 @app.on_message(filters.command("search"))
 async def search(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2696,6 +2792,7 @@ async def search(_, m: Message):
     keyboard = InlineKeyboardMarkup(btn_rows)
     await msg.edit(text, reply_markup=keyboard)
 
+@safe_handler
 @app.on_message(filters.command("secret"))
 async def secret(_, m: Message):
     secrets = [
@@ -2710,6 +2807,7 @@ async def secret(_, m: Message):
 
 
 
+@safe_handler
 @app.on_message(filters.command("skip"))
 async def skip(_, m: Message):
     chat_id = m.chat.id
@@ -2720,6 +2818,7 @@ async def skip(_, m: Message):
     await m.reply(f"⏭ **Skipped!**\nThe answer was: **{quiz['title']}** by {quiz['artist']}")
 
 
+@safe_handler
 @app.on_message(filters.command("songbattle"))
 async def songbattle(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -2750,6 +2849,7 @@ async def songbattle(_, m: Message):
         del group_votes[group_id]
         await m.reply(f"🏆 **Battle Result!**\n\n🎵 **{s1}**: {v0} votes\n🎵 **{s2}**: {v1} votes\n\n👑 **Winner: {winner}!**\n\n📥 `/download {winner}`")
 
+@safe_handler
 @app.on_message(filters.command("songstats"))
 async def songstats(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2775,10 +2875,11 @@ async def songstats(_, m: Message):
                    f"👍 Likes: {reactions.get('like',0)} | 🔥 Fire: {reactions.get('fire',0)} | 💔 Sad: {reactions.get('sad',0)}\n\n"
                    f"📥 `/download {song_name}`")
 
+@safe_handler
 @app.on_message(filters.command("start"))
 async def start(_, m: Message):
     user_id = m.from_user.id
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, get_user_name(m))
     _bot_raw = BOT_USERNAME.replace("@", "")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎵 Music", callback_data="menu_music_1"),
@@ -2804,6 +2905,7 @@ async def start(_, m: Message):
         reply_markup=keyboard
     )
 
+@safe_handler
 @app.on_message(filters.command("stats"))
 async def bot_stats(_, m: Message):
     update_today_stats()
@@ -2821,10 +2923,11 @@ async def bot_stats(_, m: Message):
                   f"🎧 Powered by BeatNova")
 
 
+@safe_handler
 @app.on_message(filters.command("streak"))
 async def streak(_, m: Message):
     user_id = m.from_user.id
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, get_user_name(m))
     u = db.get_user(user_id)
     current_streak = u["streak"] if u else 0
     if current_streak == 0:
@@ -2834,24 +2937,26 @@ async def streak(_, m: Message):
     elif current_streak >= 7: emoji = "⚡"
     elif current_streak >= 3: emoji = "🔥"
     else: emoji = "✨"
-    await m.reply(f"{emoji} **{m.from_user.first_name}'s Streak:**\n\n"
+    await m.reply(f"{emoji} **{get_user_name(m)}'s Streak:**\n\n"
                   f"🔥 **{current_streak} day streak!**\n\n"
                   f"{'👑 Legendary!' if current_streak >= 30 else '⚡ Week streak! Amazing!' if current_streak >= 7 else '🔥 3 days! Keep going!' if current_streak >= 3 else '✨ Good start!'}\n\n"
                   f"📥 Download daily to keep it going!")
 
+@safe_handler
 @app.on_message(filters.command("subscribe"))
 async def subscribe(_, m: Message):
     user_id = m.from_user.id
     if db.is_subscribed(user_id):
         await m.reply("🔔 Already subscribed!\nUse `/unsubscribe` to stop.")
         return
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, get_user_name(m))
     db.set_subscribed(user_id, True)
     await m.reply("🔔 **Subscribed!**\n\nHar roz subah 9 AM par ek song milega!\nUse `/unsubscribe` to stop.")
 
 # T
 
 
+@safe_handler
 @app.on_message(filters.command("topartist"))
 async def topartist(_, m: Message):
     parts = m.text.split(None, 1)
@@ -2871,6 +2976,7 @@ async def topartist(_, m: Message):
     text += "\n📥 `/download [song name]`"
     await msg.edit(text)
 
+@safe_handler
 @app.on_message(filters.command("topbollywood"))
 async def topbollywood(_, m: Message):
     msg = await m.reply("🎬 **Fetching Top Bollywood...**")
@@ -2887,6 +2993,7 @@ async def topbollywood(_, m: Message):
     text += "\n📥 `/download [song name]`"
     await msg.edit(text)
 
+@safe_handler
 @app.on_message(filters.command("topindia"))
 async def topindia(_, m: Message):
     msg = await m.reply("🇮🇳 **Fetching Top India...**")
@@ -2903,6 +3010,7 @@ async def topindia(_, m: Message):
     text += "\n📥 `/download [song name]`"
     await msg.edit(text)
 
+@safe_handler
 @app.on_message(filters.command("topsongs"))
 async def topsongs(_, m: Message):
     top = db.get_top_rated_songs()
@@ -2914,6 +3022,7 @@ async def topsongs(_, m: Message):
         text += f"{i}. **{row['song']}** — ⭐ {row['avg_r']:.1f}/5 ({row['cnt']} votes)\n"
     await m.reply(text)
 
+@safe_handler
 @app.on_message(filters.command("topuser"))
 async def topuser(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -2928,6 +3037,7 @@ async def topuser(_, m: Message):
                   f"🏆 `/gleaderboard` — Full ranking")
 
 
+@safe_handler
 @app.on_message(filters.command("tournament"))
 async def tournament(_, m: Message):
     msg = await m.reply("🏆 **Setting up Tournament...**")
@@ -2942,6 +3052,7 @@ async def tournament(_, m: Message):
     text += "\n**Vote with the number of your favourite!** 🎵"
     await msg.edit(text)
 
+@safe_handler
 @app.on_message(filters.command("trendingartist"))
 async def trendingartist(_, m: Message):
     msg = await m.reply("🔥 **Fetching Trending Artists...**")
@@ -2964,6 +3075,7 @@ async def trendingartist(_, m: Message):
     text += f"\n🎵 Use `/artist [name]` to see their songs!"
     await msg.edit(text)
 
+@safe_handler
 @app.on_message(filters.command("trending"))
 async def trending(_, m: Message):
     parts = m.text.split(None, 1)
@@ -3004,6 +3116,7 @@ async def trending(_, m: Message):
 
 # U
 
+@safe_handler
 @app.on_message(filters.command("unsubscribe"))
 async def unsubscribe(_, m: Message):
     user_id = m.from_user.id
@@ -3013,6 +3126,7 @@ async def unsubscribe(_, m: Message):
     db.set_subscribed(user_id, False)
     await m.reply("🔕 **Unsubscribed!**\nYou won't receive daily songs anymore.")
 
+@safe_handler
 @app.on_message(filters.command("uptime"))
 async def uptime(_, m: Message):
     delta = datetime.datetime.now() - START_TIME
@@ -3023,6 +3137,7 @@ async def uptime(_, m: Message):
 
 # V
 
+@safe_handler
 @app.on_message(filters.command("vibe"))
 async def vibe(_, m: Message):
     parts = m.text.split(None, 1)
@@ -3061,6 +3176,7 @@ async def vibe(_, m: Message):
                    f"⏱ {mins}:{secs:02d} | 🌐 {song_data.get('language','Unknown').capitalize()}\n\n"
                    f"**Vibe:** {vibe_r}\n📝 {desc}")
 
+@safe_handler
 @app.on_message(filters.command("votesong"))
 async def votesong(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -3101,6 +3217,7 @@ async def votesong(_, m: Message):
 
 # W
 
+@safe_handler
 @app.on_message(filters.command("wishlist"))
 async def wishlist(_, m: Message):
     parts = m.text.split(None, 1)
@@ -3109,7 +3226,7 @@ async def wishlist(_, m: Message):
         return
     query = parts[1].strip()
     user_id = m.from_user.id
-    db.ensure_user(user_id, m.from_user.first_name)
+    db.ensure_user(user_id, get_user_name(m))
     if not db.add_wishlist(user_id, query):
         await m.reply("📋 Already in wishlist!")
         return
@@ -3117,6 +3234,7 @@ async def wishlist(_, m: Message):
 
 # Y
 
+@safe_handler
 @app.on_message(filters.command("year"))
 async def year_cmd(_, m: Message):
     parts = m.text.split(None, 1)
@@ -3141,6 +3259,7 @@ async def year_cmd(_, m: Message):
 
 # ========== QUIZ CHECK (always last) ==========
 
+@safe_handler
 @app.on_message(filters.text & ~filters.regex(r"^/"))
 async def quiz_check(_, m: Message):
     chat_id = m.chat.id
@@ -3160,10 +3279,10 @@ async def quiz_check(_, m: Message):
             selected = quiz["options"][idx]
             if selected.lower() == correct:
                 del active_quiz[chat_id]
-                db.ensure_user(m.from_user.id, m.from_user.first_name)
+                db.ensure_user(m.from_user.id, get_user_name(m))
                 db.add_xp(m.from_user.id, XP_REWARDS["quiz_win"])
                 await m.reply(
-                    f"✅ **Sahi Jawab! {m.from_user.first_name}!** 🎉\n"
+                    f"✅ **Sahi Jawab! {get_user_name(m)}!** 🎉\n"
                     f"🎵 **{quiz['title']}** — {quiz['artist']}\n"
                     f"✨ **+{XP_REWARDS['quiz_win']} XP!**\n\n"
                     f"📥 `/download {quiz['title']}`"
@@ -3174,9 +3293,9 @@ async def quiz_check(_, m: Message):
     elif quiz_type == "fillblank":
         if user_ans == correct or correct in user_ans:
             del active_quiz[chat_id]
-            db.ensure_user(m.from_user.id, m.from_user.first_name)
+            db.ensure_user(m.from_user.id, get_user_name(m))
             db.add_xp(m.from_user.id, XP_REWARDS["quiz_win"])
-            await m.reply(f"✅ **Correct! {m.from_user.first_name}!** 🎉\n"
+            await m.reply(f"✅ **Correct! {get_user_name(m)}!** 🎉\n"
                           f"Word: **{correct}** | Song: **{quiz['title']}**\n"
                           f"✨ **+{XP_REWARDS['quiz_win']} XP!**")
         else:
@@ -3185,9 +3304,9 @@ async def quiz_check(_, m: Message):
     elif quiz_type == "yeargame":
         if user_ans == correct or user_ans in correct:
             del active_quiz[chat_id]
-            db.ensure_user(m.from_user.id, m.from_user.first_name)
+            db.ensure_user(m.from_user.id, get_user_name(m))
             db.add_xp(m.from_user.id, XP_REWARDS["quiz_win"])
-            await m.reply(f"✅ **Sahi! {m.from_user.first_name}!** 🎉\nYear: **{correct}**\n✨ **+{XP_REWARDS['quiz_win']} XP!**")
+            await m.reply(f"✅ **Sahi! {get_user_name(m)}!** 🎉\nYear: **{correct}**\n✨ **+{XP_REWARDS['quiz_win']} XP!**")
         else:
             try:
                 diff = abs(int(user_ans) - int(correct))
@@ -3201,9 +3320,9 @@ async def quiz_check(_, m: Message):
     else:  # guess
         if any(w in user_ans for w in correct.split() if len(w) > 3):
             del active_quiz[chat_id]
-            db.ensure_user(m.from_user.id, m.from_user.first_name)
+            db.ensure_user(m.from_user.id, get_user_name(m))
             db.add_xp(m.from_user.id, XP_REWARDS["quiz_win"])
-            await m.reply(f"✅ **Correct! {m.from_user.first_name}!** 🎉\n"
+            await m.reply(f"✅ **Correct! {get_user_name(m)}!** 🎉\n"
                           f"🎵 **{quiz['title']}** by {quiz['artist']}\n"
                           f"✨ **+{XP_REWARDS['quiz_win']} XP!**\n\n"
                           f"📥 `/download {quiz['title']}`")
@@ -3304,6 +3423,7 @@ SLOT_WINS = {
     ("⭐","⭐","⭐"): ("TRIPLE STAR! ⭐", 150),
 }
 
+@safe_handler
 @app.on_message(filters.command("slots"))
 async def slots_cmd(_, m: Message):
     import random as _r
@@ -3314,11 +3434,11 @@ async def slots_cmd(_, m: Message):
     combo = (s1, s2, s3)
     if combo in SLOT_WINS:
         label, xp = SLOT_WINS[combo]
-        db.ensure_user(m.from_user.id, m.from_user.first_name)
+        db.ensure_user(m.from_user.id, get_user_name(m))
         db.add_xp(m.from_user.id, xp)
         result += f"🎉 **{label}**\n✨ +{xp} XP!"
     elif s1 == s2 or s2 == s3 or s1 == s3:
-        db.ensure_user(m.from_user.id, m.from_user.first_name)
+        db.ensure_user(m.from_user.id, get_user_name(m))
         db.add_xp(m.from_user.id, 50)
         result += f"✅ **2 same! Small win!**\n✨ +50 XP!"
     else:
@@ -3326,6 +3446,7 @@ async def slots_cmd(_, m: Message):
     result += "\n\n🎰 `/slots` — Dobara spin karo!"
     await msg.edit(result)
 
+@safe_handler
 @app.on_message(filters.command("dice"))
 async def dice_cmd(_, m: Message):
     """Simple dice roll 1-6"""
@@ -3337,6 +3458,7 @@ async def dice_cmd(_, m: Message):
     else: msg_text += "Roll again with `/dice`!"
     await m.reply(msg_text)
 
+@safe_handler
 @app.on_message(filters.command("guess"))
 async def guess_cmd(_, m: Message):
     chat_id = m.chat.id
@@ -3347,7 +3469,7 @@ async def guess_cmd(_, m: Message):
         if chat_id not in active_guess:
             # Auto-start if no game active
             number = random.randint(1, 100)
-            active_guess[chat_id] = {"number": number, "attempts": 0, "starter": m.from_user.first_name}
+            active_guess[chat_id] = {"number": number, "attempts": 0, "starter": get_user_name(m)}
             await m.reply(
                 f"🔢 **Number Guess Game!**\n\n"
                 f"I picked a number between 1-100!\n"
@@ -3369,7 +3491,7 @@ async def guess_cmd(_, m: Message):
         )
     else:
         number = random.randint(1, 100)
-        active_guess[chat_id] = {"number": number, "attempts": 0, "starter": m.from_user.first_name}
+        active_guess[chat_id] = {"number": number, "attempts": 0, "starter": get_user_name(m)}
         await m.reply(
             f"🔢 **Number Guess Game!**\n\n"
             f"I picked a number between **1-100**!\n\n"
@@ -3384,12 +3506,12 @@ async def _process_guess(m, chat_id, guess):
     active_guess[chat_id] = g
     if guess == g["number"]:
         del active_guess[chat_id]
-        db.ensure_user(m.from_user.id, m.from_user.first_name)
+        db.ensure_user(m.from_user.id, get_user_name(m))
         attempts = g["attempts"]
         xp = max(10, 100 - (attempts-1)*8)
         db.add_xp(m.from_user.id, xp)
         await m.reply(
-            f"🎉 **CORRECT! {m.from_user.first_name}!**\n\n"
+            f"🎉 **CORRECT! {get_user_name(m)}!**\n\n"
             f"Number was: **{g['number']}**\n"
             f"Attempts: **{attempts}**\n"
             f"✨ +{xp} XP!\n\n"
@@ -3400,6 +3522,7 @@ async def _process_guess(m, chat_id, guess):
     else:
         await m.reply(f"📉 **{guess}** — Go **lower**! (Attempt #{g['attempts']})")
 
+@safe_handler
 @app.on_message(filters.command("endguess"))
 async def endguess_cmd(_, m: Message):
     chat_id = m.chat.id
@@ -3409,6 +3532,7 @@ async def endguess_cmd(_, m: Message):
     g = active_guess.pop(chat_id)
     await m.reply(f"❌ **Game ended!**\nNumber was: **{g['number']}**")
 
+@safe_handler
 @app.on_message(filters.command("bomb"))
 async def bomb_cmd(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -3433,17 +3557,18 @@ async def bomb_cmd(_, m: Message):
     # Create new lobby
     active_bomb[chat_id] = {
         "holder": None, "name": None,
-        "players": {m.from_user.id: m.from_user.first_name},
+        "players": {m.from_user.id: get_user_name(m)},
         "started": False
     }
     await m.reply(
         f"💣 **BOMB GAME LOBBY!**\n\n"
-        f"**{m.from_user.first_name}** created the game!\n\n"
+        f"**{get_user_name(m)}** created the game!\n\n"
         f"⚡ `/joinb` — Join karo (need 2+ players)\n"
         f"🚀 `/startbomb` — Start game\n"
         f"❌ `/cancelbomb` — Cancel"
     )
 
+@safe_handler
 @app.on_message(filters.command("joinb"))
 async def joinbomb_cmd(_, m: Message):
     chat_id = m.chat.id
@@ -3456,17 +3581,18 @@ async def joinbomb_cmd(_, m: Message):
         return
     uid = m.from_user.id
     if uid in b["players"]:
-        await m.reply(f"✅ {m.from_user.first_name}, you already joined!")
+        await m.reply(f"✅ {get_user_name(m)}, you already joined!")
         return
-    b["players"][uid] = m.from_user.first_name
+    b["players"][uid] = get_user_name(m)
     active_bomb[chat_id] = b
     names = ", ".join(b["players"].values())
     await m.reply(
-        f"✅ **{m.from_user.first_name} joined!**\n\n"
+        f"✅ **{get_user_name(m)} joined!**\n\n"
         f"👥 Players ({len(b['players'])}): {names}\n"
         f"🚀 `/startbomb` — Start when ready!"
     )
 
+@safe_handler
 @app.on_message(filters.command("startbomb"))
 async def startbomb_cmd(_, m: Message):
     chat_id = m.chat.id
@@ -3512,6 +3638,7 @@ async def _bomb_timer(chat_id, m, timer):
             )
         except: pass
 
+@safe_handler
 @app.on_message(filters.command("cancelbomb"))
 async def cancelbomb_cmd(_, m: Message):
     chat_id = m.chat.id
@@ -3521,6 +3648,7 @@ async def cancelbomb_cmd(_, m: Message):
     active_bomb.pop(chat_id)
     await m.reply("❌ **Bomb game cancelled!**")
 
+@safe_handler
 @app.on_message(filters.command("passbomb"))
 async def passbomb_cmd(_, m: Message):
     chat_id = m.chat.id
@@ -3554,10 +3682,11 @@ async def passbomb_cmd(_, m: Message):
     active_bomb[chat_id] = bomb
     await m.reply(
         f"💣 **Passed!**\n\n"
-        f"**{m.from_user.first_name}** → **{target.first_name}**\n"
+        f"**{get_user_name(m)}** → **{target.first_name}**\n"
         f"⚡ Pass it fast or BOOM! 💥"
     )
 
+@safe_handler
 @app.on_message(filters.command("duel"))
 async def duel_cmd(_, m: Message):
     if m.chat.type.name not in ("GROUP", "SUPERGROUP"):
@@ -3595,6 +3724,7 @@ async def duel_cmd(_, m: Message):
 
 duel_defending = {}  # {user_id: True}
 
+@safe_handler
 @app.on_message(filters.command("attack"))
 async def attack_cmd(_, m: Message):
     chat_id = m.chat.id
@@ -3607,7 +3737,7 @@ async def attack_cmd(_, m: Message):
         await m.reply(f"❌ Not your turn! **{other}** goes next!")
         return
     damage = random.randint(10, 35)
-    attacker = m.from_user.first_name
+    attacker = get_user_name(m)
     if m.from_user.id == duel["p1"]:
         defender_id, defender_name = duel["p2"], duel["p2name"]
         hp_key = "hp2"
@@ -3625,7 +3755,7 @@ async def attack_cmd(_, m: Message):
     # Check win
     if duel[hp_key] <= 0:
         del active_duel[chat_id]
-        db.ensure_user(m.from_user.id, m.from_user.first_name)
+        db.ensure_user(m.from_user.id, get_user_name(m))
         db.add_xp(m.from_user.id, 100)
         await m.reply(
             f"⚔️ **{attacker}** hits **{defender_name}** for **{damage}** damage!\n\n"
@@ -3643,6 +3773,7 @@ async def attack_cmd(_, m: Message):
         f"⚔️ `/attack` ya 🛡 `/defend`"
     )
 
+@safe_handler
 @app.on_message(filters.command("defend"))
 async def defend_cmd(_, m: Message):
     chat_id = m.chat.id
@@ -3662,7 +3793,7 @@ async def defend_cmd(_, m: Message):
         other = duel["p1name"]
     active_duel[chat_id] = duel
     await m.reply(
-        f"🛡 **{m.from_user.first_name}** defend mode mein hai!\n"
+        f"🛡 **{get_user_name(m)}** defend mode mein hai!\n"
         f"Next attack block ho jayega!\n\n"
         f"⚔️ **{other}** ka turn!"
     )
@@ -3710,6 +3841,7 @@ def _get_wordle_hint(word, attempts):
     pos = random.choice(unrevealed)
     return "💡 Hint: Position " + str(pos+1) + " is **" + word[pos] + "**"
 
+@safe_handler
 @app.on_message(filters.command("wordle"))
 async def wordle_cmd(_, m: Message):
     user_id = m.from_user.id
@@ -3732,6 +3864,7 @@ async def wordle_cmd(_, m: Message):
         "Use `/g WORD` — e.g. `/g MUSIC`"
     )
 
+@safe_handler
 @app.on_message(filters.command("dwordle"))
 async def dwordle_cmd(_, m: Message):
     word = db.get_or_create_daily_wordle(WORDLE_WORDS)
@@ -3758,6 +3891,7 @@ async def dwordle_cmd(_, m: Message):
         "**20 attempts** | Use `/g WORD` to guess"
     )
 
+@safe_handler
 @app.on_message(filters.command("lwordle"))
 async def lwordle_cmd(_, m: Message):
     rows = db.get_wordle_leaderboard(10)
@@ -3773,6 +3907,7 @@ async def lwordle_cmd(_, m: Message):
         text += medal + " **" + str(row["name"]) + "** — " + str(row["wins"]) + " wins" + streak_part + "\n"
     await m.reply(text)
 
+@safe_handler
 @app.on_message(filters.command("g"))
 async def wordle_guess(_, m: Message):
     user_id = m.from_user.id
@@ -3813,8 +3948,8 @@ async def wordle_guess(_, m: Message):
 
     if guess == word:
         del active_wordle[user_id]
-        db.ensure_user(user_id, m.from_user.first_name)
-        db.record_wordle_win(user_id, m.from_user.first_name)
+        db.ensure_user(user_id, get_user_name(m))
+        db.record_wordle_win(user_id, get_user_name(m))
         stats = db.get_wordle_stats(user_id)
         if attempts_used <= 5:
             xp = 30
@@ -3826,7 +3961,7 @@ async def wordle_guess(_, m: Message):
         streak_val = stats.get("streak", 1)
         streak_line = "\n🔥 Streak: **" + str(streak_val) + " days**!" if streak_val > 1 else ""
         await m.reply(
-            "🎉 **Correct, " + m.from_user.first_name + "!**\n\n" +
+            "🎉 **Correct, " + get_user_name(m) + "!**\n\n" +
             prev + "\n\n" +
             "🟩 Word: **" + word + "**\n" +
             "Attempts: **" + str(attempts_used) + "/20** | ✨ +" + str(xp) + " XP" + streak_line + "\n\n" +
