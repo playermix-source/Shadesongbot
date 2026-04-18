@@ -440,13 +440,17 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
             raw = yt_raw2
             local_path = raw.get("_local_path")
             print(f"[send_song] ✅ yt-dlp: {raw.get('name')} ({raw.get('duration')}s)")
+            # yt-dlp result — skip further validation, trust it
+            wrong_song = False
         else:
             print(f"[send_song] yt-dlp also failed for: {query}")
-            await msg.edit(
-                f"❌ **'{query}'** not found on JioSaavn.\n\n"
-                f"This song may only be on YouTube. Try searching with full artist name."
-            )
-            return
+            # Last resort: use whatever saavn gave us even if artist mismatch
+            # Better to give a song than nothing
+            raw = await asyncio.to_thread(apis.search_song_download, query.split()[0] + " " + query.split()[1] if len(query.split()) >= 2 else query, quality)
+            if not raw:
+                await msg.edit(f"❌ **'{query}'** not found.\n\nTry: `/download {' '.join(query.split()[:2])}`")
+                return
+            wrong_song = False
 
     # If result is still a short clip (<90s), force yt-dlp with original user query
     if int(raw.get("duration", 0)) > 0 and int(raw.get("duration", 0)) < 90:
