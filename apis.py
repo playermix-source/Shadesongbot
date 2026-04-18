@@ -709,22 +709,25 @@ def search_song_download(query, quality="320"):
         print(f"[search_song_download] Alt query: '{alt_q}'")
         s = _saavn_full(alt_q)
         if s:
-            # Validate: result name must contain ALL original title words
-            # e.g. alt "pal pal" → result "Pal" (Arijit) = REJECT because "pal pal" not in "pal"
-            result_name = s.get("name", "").lower()
-            result_name_words = result_name.split()
-            title_words_ordered = title_part.split() if len(words) >= 3 else query.lower().split()
-            # Check result has at least as many title word occurrences as query
-            valid = True
-            for tw in title_words_ordered:
-                if result_name_words.count(tw) < title_words_ordered.count(tw):
-                    valid = False
-                    break
-            if valid:
-                print(f"[search_song_download] ✅ Found via '{alt_q}': {s.get('name')} ({s.get('duration')}s)")
+            # Validate: result name must START WITH all original title words in order
+            # "Pal Pal X Haseen" starts with "pal pal" ✅ BUT has extra "x haseen" → also check
+            # "Pal" doesn't start with "pal pal" → REJECT
+            result_words = s.get("name", "").lower().strip().split()
+            title_words_list = title_part.split() if len(words) >= 3 else query.lower().split()
+            # Must start with all title words
+            starts_ok = result_words[:len(title_words_list)] == title_words_list
+            # Must not have penalty words immediately after title
+            extra_words = result_words[len(title_words_list):]
+            has_penalty = any(
+                re.sub(r'[^a-z0-9]', '', w) in [re.sub(r'[^a-z0-9]', '', p) for p in PENALTY_WORDS]
+                or w in ('x', 'vs', 'feat', 'ft', 'and', '&')
+                for w in extra_words
+            )
+            if starts_ok and not has_penalty:
+                print(f"[search_song_download] ✅ '{alt_q}': {s.get('name')} ({s.get('duration')}s)")
                 return s
             else:
-                print(f"[search_song_download] ❌ Rejected '{s.get('name')}' — doesn't match title '{title_part}'")
+                print(f"[search_song_download] ❌ Rejected '{s.get('name')}' — starts_ok={starts_ok} penalty={has_penalty}")
 
     # 3. yt-dlp fallback
     print(f"[yt-dlp] Trying: {query}")
