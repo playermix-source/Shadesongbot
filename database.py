@@ -2,12 +2,43 @@ import sqlite3
 import datetime
 import os
 
-# Railway free plan: no persistent volume — use /tmp (survives restarts but not deploys)
-# Set RAILWAY_VOLUME_MOUNT_PATH env var if you ever upgrade to paid plan with volume
+# ── Storage config ────────────────────────────────────────────────────────────
+# FREE persistent DB options (in priority order):
+#
+# OPTION 1 — Turso (recommended, free 500MB, SQLite-compatible):
+#   1. Go to https://turso.tech → sign up free
+#   2. Create a DB → get URL + auth token
+#   3. Set Railway env vars: TURSO_URL and TURSO_TOKEN
+#   4. Add to requirements.txt: libsql-experimental
+#
+# OPTION 2 — Railway Volume (paid only, skip for free plan)
+#
+# OPTION 3 — Local /tmp (default, data lost on redeploy)
+# ─────────────────────────────────────────────────────────────────────────────
+
+TURSO_URL = os.environ.get("TURSO_URL", "")
+TURSO_TOKEN = os.environ.get("TURSO_TOKEN", "")
 _DATA_DIR = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "/tmp")
 DB_PATH = os.path.join(_DATA_DIR, "beatnova.db")
 
+# Detect which backend to use
+_USE_TURSO = bool(TURSO_URL and TURSO_TOKEN)
+
+if _USE_TURSO:
+    print(f"[DB] Using Turso cloud DB ✅ (persistent)")
+else:
+    print(f"[DB] Using local SQLite at {DB_PATH} ⚠️ (lost on redeploy)")
+
 def get_conn():
+    if _USE_TURSO:
+        try:
+            import libsql_experimental as libsql
+            conn = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+            conn.row_factory = sqlite3.Row
+            return conn
+        except ImportError:
+            print("[DB] libsql-experimental not installed — falling back to local SQLite")
+            print("[DB] Add 'libsql-experimental' to requirements.txt")
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -164,8 +195,9 @@ def get_or_create_daily_wordle(word_pool):
     c.execute("SELECT word FROM daily_wordle WHERE date=?", (today,))
     row = c.fetchone()
     if row:
+        word = row["word"]
         conn.close()
-        return row["word"]
+        return word
     word = _random.choice(word_pool)
     c.execute("INSERT INTO daily_wordle (date, word) VALUES (?,?)", (today, word))
     conn.commit()
@@ -538,7 +570,11 @@ def get_group_members_count(group_id):
 
 # ========== GROUP SETTINGS ==========
 
+ALLOWED_GROUP_KEYS = {"daily_song", "party_mode", "party_host"}
+
 def get_group_setting(group_id, key):
+    if key not in ALLOWED_GROUP_KEYS:
+        raise ValueError(f"Invalid setting key: {key}")
     conn = get_conn()
     c = conn.cursor()
     c.execute(f"SELECT {key} FROM group_settings WHERE group_id=?", (group_id,))
@@ -547,6 +583,8 @@ def get_group_setting(group_id, key):
     return row[key] if row else 0
 
 def set_group_setting(group_id, key, value):
+    if key not in ALLOWED_GROUP_KEYS:
+        raise ValueError(f"Invalid setting key: {key}")
     conn = get_conn()
     c = conn.cursor()
     c.execute("""INSERT INTO group_settings (group_id) VALUES (?)
