@@ -206,6 +206,7 @@ def _saavn_dev(query, limit=10):
                 "download_url": dl_url,
                 "id": s.get("id", ""),
                 "quality": "320kbps",
+                "play_count": int(s.get("playCount", 0) or 0),
             })
         return out
     except Exception as e:
@@ -617,6 +618,12 @@ def _score_all(results, query):
         elif duration > 150:
             score += 3
 
+        # Popularity bonus — JioSaavn play count (log scale so 1B doesn't dominate)
+        play_count = int(song.get("play_count", 0) or 0)
+        if play_count > 0:
+            import math
+            score += min(int(math.log10(play_count + 1) * 5), 25)  # max +25 bonus
+
         scored.append((score, song))
 
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -760,6 +767,82 @@ def search_song_download(query, quality="320"):
 
 
 # ==================== YOUTUBE MUSIC via yt-dlp ====================
+
+def _ytdlp_download_url(url):
+    """Download audio from a direct YouTube/YouTube Music URL"""
+    try:
+        import yt_dlp, os, re as _re
+    except ImportError:
+        print("[yt-dlp] Not installed")
+        return None
+    try:
+        tmp_dir = "/tmp/beatnova_dl"
+        os.makedirs(tmp_dir, exist_ok=True)
+        out_template = os.path.join(tmp_dir, "%(title)s.%(ext)s")
+        ydl_opts = {
+            "quiet": False,
+            "no_warnings": False,
+            "format": "bestaudio[ext=m4a]/bestaudio/best",
+            "outtmpl": out_template,
+            "noplaylist": True,
+            "socket_timeout": 30,
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+        }
+        print(f"[yt-dlp URL] Downloading: {url}")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+        if not info:
+            return None
+        raw_title = info.get("title", "Unknown")
+        # Clean title same as search downloads
+        clean = raw_title
+        clean = _re.sub(r'\s*[\(\[][^\)\]]{0,60}[\)\]]', '', clean)
+        clean = _re.sub(r'\s*@\S+', '', clean)
+        clean = _re.sub(r'\s*[Pp]rod(uced by|\.)\s+.*$', '', clean)
+        clean = _re.sub(r'\s*(ft\.|feat\.?)\s+.*$', '', clean, flags=_re.IGNORECASE)
+        clean = _re.sub(r'\s*\bwith\s+[@A-Z]\S*.*$', '', clean)
+        clean = _re.sub(r'\s*\|.*$', '', clean)
+        clean = _re.sub(r'\s+\d{4}$', '', clean)
+        parts = [p.strip() for p in clean.split(' - ') if p.strip()]
+        clean = parts[-1] if len(parts) >= 2 else (parts[0] if parts else raw_title)
+        if ':' in clean:
+            cp = [p.strip() for p in clean.split(':', 1)]
+            if len(cp[0].split()) <= 3:
+                clean = cp[1]
+        title = clean.strip(' -|/') or raw_title
+        artist = info.get("artist") or info.get("creator") or info.get("uploader", "Unknown")
+        duration = int(info.get("duration") or 0)
+        # Find downloaded file
+        safe = "".join(c for c in info.get("title", "song") if c.isalnum() or c in " -_")[:40]
+        local_path = None
+        for fname in os.listdir(tmp_dir):
+            if fname.endswith(".mp3") and os.path.getsize(os.path.join(tmp_dir, fname)) > 10000:
+                local_path = os.path.join(tmp_dir, fname)
+                break
+        if not local_path:
+            print("[yt-dlp URL] File not found after download")
+            return None
+        print(f"[yt-dlp URL] ✅ {title} ({duration}s)")
+        return {
+            "source": "youtube",
+            "name": title,
+            "artist": artist,
+            "primaryArtists": artist,
+            "album": title,
+            "year": str(info.get("release_year") or (info.get("upload_date") or "")[:4] or "Unknown"),
+            "duration": duration,
+            "download_url": local_path,
+            "_local_path": local_path,
+            "quality": "192kbps",
+        }
+    except Exception as e:
+        print(f"[yt-dlp URL] Error: {type(e).__name__}: {e}")
+        return None
+
 
 def _ytdlp_download(query):
     """
