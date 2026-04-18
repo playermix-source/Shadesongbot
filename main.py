@@ -39,7 +39,7 @@ def get_user_id(m) -> int | None:
 
 def get_user_name(m, fallback: str = "User") -> str:
     """Safely get first name"""
-    return (get_user_name(m) or fallback) if m.from_user else fallback
+    return (m.from_user.first_name or fallback) if m.from_user else fallback
 
 def safe_handler(func):
     """
