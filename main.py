@@ -359,22 +359,33 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
         await msg.edit("❌ Song not found! Try a different name.")
         return
 
-    # Validate result matches query — reject clearly wrong songs
-    # e.g. query "pal pal talwiinder" → result "Pal" (Arijit) = WRONG
-    result_name = raw.get("name", "").lower().strip()
-    query_title_words = query.lower().split()
-    # Remove known artist words from query for title check
-    import re as _re
-    # Simple check: if query has 2+ repeated words (like "pal pal"), result must also have them
+    # Validate result matches query title — reject clearly wrong songs
+    # e.g. "pal pal afusic" → "Pal Pal X Haseen" = WRONG (extra words after title)
+    # e.g. "pal pal talwiinder" → "Pal" = WRONG (too few words)
+    result_name_words = raw.get("name", "").lower().strip().split()
     from collections import Counter
-    q_counts = Counter(query_title_words)
-    r_counts = Counter(result_name.split())
-    title_mismatch = any(
-        q_counts[w] > 1 and r_counts[w] < q_counts[w]
-        for w in q_counts if q_counts[w] > 1
-    )
+    # Detect artist words in query (words that appear in known aliases or are not title words)
+    query_words_all = query.lower().split()
+    # Title words = first N words that are likely song title (not artist)
+    # Heuristic: if query has repeated words, those are title (e.g. "pal pal")
+    q_counts = Counter(query_words_all)
+    repeated_title_words = [w for w in query_words_all if q_counts[w] > 1]
+
+    title_mismatch = False
+    if repeated_title_words:
+        # Query has repeated words like "pal pal" — result must also have them same count
+        for w in set(repeated_title_words):
+            if result_name_words.count(w) < q_counts[w]:
+                title_mismatch = True
+                break
+        # Also check result doesn't have extra unrelated words making it a different song
+        # "Pal Pal X Haseen" has "x" and "haseen" not in query → penalty words check
+        result_core = " ".join(result_name_words[:len(repeated_title_words)])
+        if result_core != " ".join(repeated_title_words):
+            title_mismatch = True
+
     if title_mismatch:
-        print(f"[send_song] ❌ Title mismatch: query='{query}' result='{raw.get('name')}' — forcing yt-dlp")
+        print(f"[send_song] ❌ Mismatch: query='{query}' got='{raw.get('name')}' — trying yt-dlp")
         yt_raw2 = await asyncio.to_thread(apis._ytdlp_download, query)
         if yt_raw2 and int(yt_raw2.get("duration", 0)) >= 90:
             raw = yt_raw2
@@ -382,8 +393,8 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
         else:
             await msg.edit(
                 f"❌ **Song not found** for `{query}`.\n\n"
-                f"💡 This song may only be on YouTube.\n"
-                f"Try: `/download {' '.join(query.split()[:2])}`"
+                f"💡 This song may only be on YouTube — not available on JioSaavn.\n"
+                f"Try a different song or check the artist name."
             )
             return
 
