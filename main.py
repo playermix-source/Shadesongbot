@@ -447,36 +447,27 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
         yt_raw2 = await asyncio.to_thread(apis._ytdlp_download, query)
         if yt_raw2 and int(yt_raw2.get("duration", 0)) >= 90:
             raw = yt_raw2
-            local_path = raw.get("_local_path")
             print(f"[send_song] ✅ yt-dlp: {raw.get('name')} ({raw.get('duration')}s)")
-            # yt-dlp result — skip further validation, trust it
-            wrong_song = False
         else:
-            print(f"[send_song] yt-dlp also failed for: {query}")
-            # Last resort: use whatever saavn gave us even if artist mismatch
-            # Better to give a song than nothing
-            raw = await asyncio.to_thread(apis.search_song_download, query.split()[0] + " " + query.split()[1] if len(query.split()) >= 2 else query, quality)
-            if not raw:
-                await msg.edit(f"❌ **'{query}'** not found.\n\nTry: `/download {' '.join(query.split()[:2])}`")
-                return
-            wrong_song = False
+            print(f"[send_song] yt-dlp failed for: {query}")
+            title_words = " ".join(query.split()[:2])
+            await msg.edit(
+                f"⚠️ **'{query}'** — sahi artist ka song nahi mila.\n\n"
+                f"🔍 Try karo: `/download {title_words}`"
+            )
+            return
 
-    # If result is still a short clip (<90s), force yt-dlp with original user query
+    # If result is still a short clip (<90s), force yt-dlp
     if int(raw.get("duration", 0)) > 0 and int(raw.get("duration", 0)) < 90:
-        print(f"[send_song] Short clip ({raw.get('duration')}s) — forcing yt-dlp with: {query}")
+        print(f"[send_song] Short clip ({raw.get('duration')}s) — forcing yt-dlp: {query}")
         yt_raw = await asyncio.to_thread(apis._ytdlp_download, query)
         if yt_raw and int(yt_raw.get("duration", 0)) >= 90:
             raw = yt_raw
         else:
-            await msg.edit(
-                f"❌ **Full song not found** for `{query}`.\n\n"
-                f"💡 This song may not be on JioSaavn. Try:\n"
-                f"`/download {' '.join(query.split()[:2])}` — shorter query\n"
-                f"Or check if artist name is correct."
-            )
+            await msg.edit(f"❌ Full song nahi mila `{query}` ke liye. Try: `/download {' '.join(query.split()[:2])}`")
             return
 
-    # Preserve _local_path before normalize strips it
+    # Preserve _local_path BEFORE normalize strips it (yt-dlp sets this)
     local_path = raw.get("_local_path")
 
     raw = _normalize_song(raw)
