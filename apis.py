@@ -644,9 +644,7 @@ def _score_all(results, query):
         scored.append((score, song))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    # Filter out completely irrelevant results (score too negative)
-    min_score = scored[0][0] - 350 if scored else -9999
-    return [s for sc, s in scored if sc >= min_score]
+    return [s for _, s in scored]
 
 
 def search_songs(query, limit=10):
@@ -664,13 +662,10 @@ def search_songs(query, limit=10):
             print(f"[search_songs] All APIs failed, trying yt-dlp for: {query}")
             results = _ytdlp_search_multiple(query, limit)
     else:
-        # For international, also try JioSaavn — many Indian songs have English titles
         saavn = _saavn_dev(query, limit) or _saavn_old(query, limit)
         deezer = _deezer_search(query, limit)
         itunes = _itunes_search(query, limit) if len(deezer) < 3 else []
         results = saavn + deezer + itunes
-
-        # Deduplicate by name
         seen, deduped = set(), []
         for r in results:
             key = r.get("name", "").lower().strip()
@@ -678,13 +673,26 @@ def search_songs(query, limit=10):
                 seen.add(key)
                 deduped.append(r)
         results = deduped
-
         if len(results) < 3:
-            print(f"[search_songs] Too few results, adding yt-dlp for: {query}")
             results = results + _ytdlp_search_multiple(query, limit)
 
-    # Sort ALL results by score — best first
+    # Sort by score
     results = _score_all(results, query)
+
+    # If top results are all x-mashups or irrelevant, try yt-dlp for better results
+    if results:
+        top3 = results[:3]
+        query_words_set = set(query.lower().split())
+        top3_relevant = [
+            r for r in top3
+            if any(w in r.get("name", "").lower() for w in query_words_set)
+            and not re.search(r'\b(x|vs)\b', r.get("name", "").lower())
+        ]
+        if not top3_relevant:
+            print(f"[search_songs] Top results irrelevant, trying yt-dlp: {query}")
+            yt_results = _ytdlp_search_multiple(query, 3)
+            if yt_results:
+                results = yt_results + results
 
     return results[:limit]
 
@@ -965,16 +973,18 @@ def _ytdlp_download(query):
             album   = entry.get("album") or title
             year    = str(entry.get("release_year") or (entry.get("upload_date") or "")[:4] or "Unknown")
             vid_id  = entry.get("id", "")
-            # Find downloaded file
-            local_path = os.path.join(tmp_dir, f"{safe}.mp3")
-            if not os.path.exists(local_path):
-                for ext in ["mp3", "m4a", "webm", "opus", "ogg"]:
-                    c = os.path.join(tmp_dir, f"{safe}.{ext}")
-                    if os.path.exists(c):
-                        local_path = c
-                        break
-            if not os.path.exists(local_path):
-                print(f"[yt-dlp] File not found after download: {safe}.*")
+            # Find downloaded file — use newest file (filename may differ from safe)
+            import glob as _glob, time as _time
+            all_audio = []
+            for ext in ["mp3", "m4a", "webm", "opus", "ogg"]:
+                all_audio += _glob.glob(os.path.join(tmp_dir, f"*.{ext}"))
+            now = _time.time()
+            recent = [f for f in all_audio if os.path.exists(f) and (now - os.path.getmtime(f)) < 120]
+            recent.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+            local_path = recent[0] if recent else None
+
+            if not local_path or not os.path.exists(local_path):
+                print(f"[yt-dlp] File not found after download for: {search_q}")
                 return None
             fsize = os.path.getsize(local_path)
             if fsize < 10000:
