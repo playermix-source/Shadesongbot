@@ -587,12 +587,12 @@ def _score_all(results, query):
         score = (len(results) - idx) * 10
 
         # ── Hard penalties ────────────────────────────────────────────────
-        # 2.0/3.0 not in query → push to bottom
+        # 2.0/3.0 not in query → always at bottom regardless of position
         if re.search(r'\b\d+\.\d+\b', name) and not re.search(r'\b\d+\.\d+\b', query_clean):
-            score -= 200
+            score = -500  # Absolute bottom — no position bonus can save it
 
-        # Short clip
-        if 0 < duration < 90:
+        # Short clip — heavy penalty but keep position context
+        elif 0 < duration < 90:
             score -= 150
 
         # ── Name relevance ────────────────────────────────────────────────
@@ -682,17 +682,22 @@ def search_songs(query, limit=10):
     # If top results are all x-mashups or irrelevant, try yt-dlp for better results
     if results:
         top3 = results[:3]
-        query_words_set = set(query.lower().split())
-        top3_relevant = [
-            r for r in top3
-            if any(w in r.get("name", "").lower() for w in query_words_set)
-            and not re.search(r'\b(x|vs)\b', r.get("name", "").lower())
-        ]
+        query_words_list = query.lower().split()
+        top3_relevant = []
+        for r in top3:
+            rname = r.get("name", "").lower()
+            # Must have query word as WHOLE WORD — "jholo" ≠ "jhol"
+            has_word = any(re.search(r'\b' + re.escape(w) + r'\b', rname) for w in query_words_list)
+            is_mashup = bool(re.search(r'\b(x|vs)\b', rname)) and 'x' not in query.lower()
+            if has_word and not is_mashup:
+                top3_relevant.append(r)
+
         if not top3_relevant:
-            print(f"[search_songs] Top results irrelevant, trying yt-dlp: {query}")
+            print(f"[search_songs] Top results irrelevant for '{query}', trying yt-dlp")
             yt_results = _ytdlp_search_multiple(query, 3)
             if yt_results:
-                results = yt_results + results
+                # Put yt-dlp results first, then JioSaavn
+                results = yt_results + [r for r in results if r not in yt_results]
 
     return results[:limit]
 
