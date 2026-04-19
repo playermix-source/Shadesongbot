@@ -29,16 +29,63 @@ if _USE_TURSO:
 else:
     print(f"[DB] Using local SQLite at {DB_PATH} ⚠️ (lost on redeploy)")
 
+class _DictRow(dict):
+    """Dict-like row that supports both row['key'] and row[0] access"""
+    def __init__(self, cursor_description, values):
+        if cursor_description:
+            super().__init__(zip([d[0] for d in cursor_description], values))
+        else:
+            super().__init__()
+        self._values = values
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return super().__getitem__(key)
+
+class _TursoCursor:
+    """Wrapper around libsql cursor to return _DictRow objects"""
+    def __init__(self, cursor):
+        self._c = cursor
+        self.description = None
+    def execute(self, sql, params=()):
+        self._c.execute(sql, params)
+        self.description = self._c.description
+        return self
+    def fetchone(self):
+        row = self._c.fetchone()
+        if row is None: return None
+        return _DictRow(self._c.description, row)
+    def fetchall(self):
+        rows = self._c.fetchall()
+        desc = self._c.description
+        return [_DictRow(desc, r) for r in rows]
+    def __iter__(self):
+        for row in self._c:
+            yield _DictRow(self._c.description, row)
+
+class _TursoConn:
+    """Wrapper around libsql connection"""
+    def __init__(self, conn):
+        self._conn = conn
+    def cursor(self):
+        return _TursoCursor(self._conn.cursor())
+    def commit(self):
+        self._conn.commit()
+    def close(self):
+        self._conn.close()
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        self.close()
+
 def get_conn():
     if _USE_TURSO:
         try:
             import libsql_experimental as libsql
-            conn = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
-            conn.row_factory = sqlite3.Row
-            return conn
+            raw_conn = libsql.connect(TURSO_URL, auth_token=TURSO_TOKEN)
+            return _TursoConn(raw_conn)
         except ImportError:
             print("[DB] libsql-experimental not installed — falling back to local SQLite")
-            print("[DB] Add 'libsql-experimental' to requirements.txt")
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
