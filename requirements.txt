@@ -2,3 +2,4 @@ pyrogram==2.0.106
 TgCrypto==1.2.5
 yt-dlp>=2024.1.1
 requests>=2.31.0
+libsql-experimental
