@@ -1966,8 +1966,11 @@ async def findlyrics(_, m: Message):
     query = parts[1].strip()
     msg = await m.reply(f"🔤 **Searching by lyrics:** `{query}`...")
     try:
-        r = requests.get(f"https://lrclib.net/api/search?q={query}", headers={"User-Agent": "MusicBot/1.0"}, timeout=15)
-        data = r.json()
+        def _search_lyrics():
+            r = requests.get(f"https://lrclib.net/api/search?q={query}",
+                           headers={"User-Agent": "MusicBot/1.0"}, timeout=15)
+            return r.json()
+        data = await asyncio.to_thread(_search_lyrics)
         if data:
             text = f"🔤 **Songs matching:** `{query}`\n\n"
             for i, item in enumerate(data[:5], 1):
