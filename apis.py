@@ -44,6 +44,12 @@ ARTIST_ALIASES = {
     "arijit": ["arijit singh"],
 }
 
+# Artists known to upload fake/cover/stolen songs on JioSaavn
+BLOCKED_ARTISTS = {
+    "luckymuzzic", "lucky muzzic", "sirchox",
+    "music factory", "hindi hits", "bollywood hits",
+}
+
 # ==================== BEST MATCH ALGORITHM ====================
 
 def _find_best_match(results, query):
@@ -221,7 +227,8 @@ def _saavn_dev(query, limit=10):
                 "quality": "320kbps",
                 "play_count": int(s.get("playCount", 0) or 0),
             })
-        return out
+        return [s for s in out
+                if not any(b in s["artist"].lower() for b in BLOCKED_ARTISTS)]
     except Exception as e:
         print(f"[saavn.dev] {e}")
         return []
@@ -282,7 +289,9 @@ def _saavn_quality(query, quality="320", limit=10):
                     "_raw": x
                 } for x in results]
 
-                # Filter short clips BEFORE scoring — don't pick a 57s verse over a 3min full song
+                # Filter blocked artists and short clips
+                mapped = [m for m in mapped
+                         if not any(b in m["artist"].lower() for b in BLOCKED_ARTISTS)]
                 full_songs = [m for m in mapped if int(m.get("duration", 0)) >= 90]
                 pool = full_songs if full_songs else mapped
 
@@ -334,6 +343,8 @@ def _saavn_quality(query, quality="320", limit=10):
                     "_raw": x
                 } for x in results_old]
 
+                mapped = [m for m in mapped
+                         if not any(b in m["artist"].lower() for b in BLOCKED_ARTISTS)]
                 full_songs = [m for m in mapped if int(m.get("duration", 0)) >= 90]
                 pool = full_songs if full_songs else mapped
 
@@ -537,15 +548,20 @@ def detect_language(query):
 # ==================== UNIFIED SEARCH ====================
 
 def _score_all(results, query):
-    """Score and sort all results by best match — used for options list display"""
+    """
+    Re-rank results — preserve JioSaavn's natural order mostly,
+    only penalize clearly unwanted versions (2.0, remix, short clips etc)
+    and boost if query has artist name that matches.
+    """
     if not results:
         return results
+
     query_clean = query.lower().strip()
     for prefix in ["download ", "song ", "full song ", "audio "]:
         query_clean = query_clean.replace(prefix, "")
     query_words = set(query_clean.split())
 
-    # Detect artist words
+    # Detect artist words in query
     all_artist_words = set()
     for song in results:
         artist_str = song.get("primaryArtists", song.get("artist", "")).lower()
@@ -560,82 +576,39 @@ def _score_all(results, query):
         if w_clean in all_artist_words:
             artist_query_words.add(w)
 
-    song_title_words = query_words - artist_query_words
-
     scored = []
-    for song in results:
+    for idx, song in enumerate(results):
         name = song.get("name", "").lower().strip()
         artist = song.get("primaryArtists", song.get("artist", "")).lower()
-        name_words = set(name.split())
-        name_words_list = name.split()
-        score = 0
+        duration = int(song.get("duration", 0))
 
-        # Exact name match
-        if name == query_clean or (song_title_words and name == " ".join(sorted(song_title_words))):
-            score += 100
+        # Start with position score — JioSaavn already sorted by popularity
+        # First result gets highest base score
+        score = (len(results) - idx) * 10
 
-        # Strong bonus: name starts with all query title words in order
-        # Use list (not set) to preserve duplicates like "pal pal"
-        if artist_query_words:
-            title_words_list = [w for w in query_clean.split() if w not in artist_query_words]
-        else:
-            title_words_list = query_clean.split()
-        if name_words_list[:len(title_words_list)] == title_words_list:
-            score += 40
+        # Hard penalize version numbers (2.0, 3.0) if not in query
+        if re.search(r'\b\d+\.\d+\b', name) and not re.search(r'\b\d+\.\d+\b', query_clean):
+            score -= 80
 
-        # Penalize: song name has FEWER words than query title — "Pal" vs "Pal Pal"
-        if len(name_words_list) < len(title_words_list):
-            score -= 30 * (len(title_words_list) - len(name_words_list))
-
-        # Word match
-        ref_words = song_title_words if artist_query_words else query_words
-        matched = ref_words & name_words
-        score += len(matched) * 10
+        # Hard penalize short clips
+        if 0 < duration < 90:
+            score -= 80
 
         # Penalize penalty words
+        name_words = set(name.split())
         extra = name_words - query_words
         for word in extra:
             word_clean = re.sub(r'[^a-z0-9]', '', word)
             if word_clean in [re.sub(r'[^a-z0-9]', '', p) for p in PENALTY_WORDS]:
-                score -= 20
+                score -= 25
 
-        # Extra heavy penalty for "2.0", "3.0" etc version numbers
-        if re.search(r'\b\d+\.\d+\b', name) and not re.search(r'\b\d+\.\d+\b', query_clean):
-            score -= 40
-
-        # Penalize year in name
-        if not re.search(r'\b(19|20)\d{2}\b', query_clean):
-            if re.search(r'\b(19|20)\d{2}\b', name):
-                score -= 10
-
-        # Artist match bonus
-        artist_words_song = set(re.sub(r'[^a-z0-9 ]', '', artist.split(",")[0].strip()).split())
+        # Bonus if query has artist name and it matches this song's artist
         if artist_query_words:
             artist_q_clean = set(re.sub(r'[^a-z0-9]', '', w) for w in artist_query_words)
-            artist_s_clean = set(re.sub(r'[^a-z0-9]', '', w) for w in artist_words_song)
-            if artist_q_clean & artist_s_clean:
-                score += 30
-        else:
-            if artist_words_song & query_words:
-                score += 5
-
-        # Shorter name penalty
-        name_extra_len = len(name) - len(" ".join(ref_words))
-        if name_extra_len > 10:
-            score -= min(name_extra_len // 5, 10)
-
-        # Prefer longer duration
-        duration = int(song.get("duration", 0))
-        if 0 < duration < 90:
-            score -= 50
-        elif duration > 150:
-            score += 3
-
-        # Popularity bonus — JioSaavn play count (log scale so 1B doesn't dominate)
-        play_count = int(song.get("play_count", 0) or 0)
-        if play_count > 0:
-            import math
-            score += min(int(math.log10(play_count + 1) * 5), 25)  # max +25 bonus
+            artist_s_words = set(re.sub(r'[^a-z0-9]', '', w)
+                                 for w in artist.split(",")[0].strip().split())
+            if artist_q_clean & artist_s_words:
+                score += 50  # Strong boost for artist match
 
         scored.append((score, song))
 
