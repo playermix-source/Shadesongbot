@@ -709,25 +709,35 @@ def search_song_download(query, quality="320"):
         print(f"[search_song_download] Alt query: '{alt_q}'")
         s = _saavn_full(alt_q)
         if s:
-            # Validate: result name must START WITH all original title words in order
-            # "Pal Pal X Haseen" starts with "pal pal" ✅ BUT has extra "x haseen" → also check
-            # "Pal" doesn't start with "pal pal" → REJECT
             result_words = s.get("name", "").lower().strip().split()
             title_words_list = title_part.split() if len(words) >= 3 else query.lower().split()
-            # Must start with all title words
             starts_ok = result_words[:len(title_words_list)] == title_words_list
-            # Must not have penalty words immediately after title
             extra_words = result_words[len(title_words_list):]
             has_penalty = any(
                 re.sub(r'[^a-z0-9]', '', w) in [re.sub(r'[^a-z0-9]', '', p) for p in PENALTY_WORDS]
                 or w in ('x', 'vs', 'feat', 'ft', 'and', '&')
                 for w in extra_words
             )
-            if starts_ok and not has_penalty:
-                print(f"[search_song_download] ✅ '{alt_q}': {s.get('name')} ({s.get('duration')}s)")
+
+            # Also validate artist if user typed one
+            artist_ok = True
+            if len(words) >= 3 and artist_part:
+                result_artist = s.get("artist", s.get("primaryArtists", "")).lower()
+                artist_matched = any(aw in result_artist for aw in artist_part.split())
+                if not artist_matched:
+                    # Check aliases too
+                    for aw in artist_part.split():
+                        for alias in ARTIST_ALIASES.get(aw, []):
+                            if any(a in result_artist for a in alias.split()):
+                                artist_matched = True
+                                break
+                artist_ok = artist_matched
+
+            if starts_ok and not has_penalty and artist_ok:
+                print(f"[search_song_download] ✅ '{alt_q}': {s.get('name')} by {s.get('artist')} ({s.get('duration')}s)")
                 return s
             else:
-                print(f"[search_song_download] ❌ Rejected '{s.get('name')}' — starts_ok={starts_ok} penalty={has_penalty}")
+                print(f"[search_song_download] ❌ Rejected '{s.get('name')}' by {s.get('artist')} — starts_ok={starts_ok} penalty={has_penalty} artist_ok={artist_ok}")
 
     # 3. yt-dlp fallback
     print(f"[yt-dlp] Trying: {query}")
