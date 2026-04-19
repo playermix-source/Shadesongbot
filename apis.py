@@ -146,6 +146,19 @@ def _find_best_match(results, query):
         if name_extra_len > 10:
             score -= min(name_extra_len // 5, 10)
 
+        # 8. Popularity bonus — higher play count = more likely to be the famous version
+        play_count = int(song.get("play_count", 0) or 0)
+        if play_count > 0:
+            import math
+            score += min(int(math.log10(play_count + 1) * 5), 25)  # max +25
+
+        # 9. Duration bonus — longer songs more likely original (not clips)
+        dur = int(song.get("duration", 0))
+        if 150 <= dur <= 420:  # 2.5 to 7 min — typical song length
+            score += 3
+        elif dur < 90:
+            score -= 30
+
         scored.append((score, song))
 
     # Sort by score descending
