@@ -579,41 +579,74 @@ def _score_all(results, query):
     scored = []
     for idx, song in enumerate(results):
         name = song.get("name", "").lower().strip()
+        name_words = set(name.split())
         artist = song.get("primaryArtists", song.get("artist", "")).lower()
         duration = int(song.get("duration", 0))
 
-        # Start with position score — JioSaavn already sorted by popularity
-        # First result gets highest base score
+        # Base: position score (JioSaavn popularity order)
         score = (len(results) - idx) * 10
 
-        # Hard penalize version numbers (2.0, 3.0) if not in query
+        # ── Hard penalties ────────────────────────────────────────────────
+        # 2.0/3.0 not in query → push to bottom
         if re.search(r'\b\d+\.\d+\b', name) and not re.search(r'\b\d+\.\d+\b', query_clean):
-            score -= 80
+            score -= 200
 
-        # Hard penalize short clips
+        # Short clip
         if 0 < duration < 90:
+            score -= 150
+
+        # ── Name relevance ────────────────────────────────────────────────
+        # Query title words that must appear in result name
+        title_words = [w for w in query_clean.split() if w not in artist_query_words]
+        title_set = set(title_words)
+
+        # How many query title words match result name
+        matched = title_set & name_words
+        score += len(matched) * 15
+
+        # ZERO match = completely wrong song (e.g. "Unholy" for query "jhol")
+        if title_set and not matched:
+            score -= 300  # push to very bottom
+
+        # Exact title match bonus
+        if name == " ".join(title_words) or name == query_clean:
+            score += 100
+
+        # Name shorter than query title = incomplete match (e.g. "Pal" for "Pal Pal")
+        if len(name.split()) < len(title_words):
+            score -= 50 * (len(title_words) - len(name.split()))
+
+        # Penalize "x" mashups (Song x OtherSong) — not a real match
+        if re.search(r'\b(x|vs|versus)\b', name) and not re.search(r'\b(x|vs|versus)\b', query_clean):
             score -= 80
 
-        # Penalize penalty words
-        name_words = set(name.split())
-        extra = name_words - query_words
+        # Penalize names with extra unrelated words (Jholo Molo for "jhol")
+        extra = name_words - title_set - artist_query_words
         for word in extra:
             word_clean = re.sub(r'[^a-z0-9]', '', word)
             if word_clean in [re.sub(r'[^a-z0-9]', '', p) for p in PENALTY_WORDS]:
                 score -= 25
 
-        # Bonus if query has artist name and it matches this song's artist
+        # ── Artist match ──────────────────────────────────────────────────
         if artist_query_words:
             artist_q_clean = set(re.sub(r'[^a-z0-9]', '', w) for w in artist_query_words)
             artist_s_words = set(re.sub(r'[^a-z0-9]', '', w)
                                  for w in artist.split(",")[0].strip().split())
             if artist_q_clean & artist_s_words:
-                score += 50  # Strong boost for artist match
+                score += 50
+
+        # ── Popularity ────────────────────────────────────────────────────
+        play_count = int(song.get("play_count", 0) or 0)
+        if play_count > 0:
+            import math
+            score += min(int(math.log10(play_count + 1) * 5), 25)
 
         scored.append((score, song))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [s for _, s in scored]
+    # Filter out completely irrelevant results (score too negative)
+    min_score = scored[0][0] - 350 if scored else -9999
+    return [s for sc, s in scored if sc >= min_score]
 
 
 def search_songs(query, limit=10):
