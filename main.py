@@ -409,67 +409,19 @@ async def send_song(m, query, msg, quality="320", _user_id=None, _first_name=Non
         await msg.edit("❌ Song not found! Try a different name.")
         return
 
-    # Smart validation: if user specified artist in query, result must match that artist
-    from collections import Counter
-    query_lower = query.lower().strip()
-    query_words = query_lower.split()
-    result_name = raw.get("name", "").lower().strip()
-    result_artist = raw.get("primaryArtists", raw.get("artist", "")).lower()
+    # Preserve _local_path BEFORE anything else (yt-dlp sets this, normalize strips it)
+    local_path = raw.get("_local_path")
 
-    # Detect if query contains artist words (words NOT in result name but in query)
-    result_name_words = set(result_name.split())
-    # Artist words = query words that don't appear in the result name
-    # e.g. "pal pal talwiinder" → "pal","pal" in result → "talwiinder" is artist word
-    potential_artist_words = [w for w in query_words if w not in result_name_words and len(w) > 2]
-
-    wrong_song = False
-    if potential_artist_words:
-        # User typed artist name — check if result artist matches (or alias)
-        artist_matched = False
-        for aw in potential_artist_words:
-            # Check direct match
-            if aw in result_artist:
-                artist_matched = True
-                break
-            # Check aliases
-            aliases = apis.ARTIST_ALIASES.get(aw, [])
-            for alias in aliases:
-                if any(a in result_artist for a in alias.split()):
-                    artist_matched = True
-                    break
-            if artist_matched:
-                break
-        if not artist_matched:
-            wrong_song = True
-            print(f"[send_song] ❌ Artist mismatch: wanted artist from '{potential_artist_words}' got '{result_artist}'")
-
-    if wrong_song:
-        print(f"[send_song] Trying yt-dlp for: {query}")
-        yt_raw2 = await asyncio.to_thread(apis._ytdlp_download, query)
-        if yt_raw2 and int(yt_raw2.get("duration", 0)) >= 90:
-            raw = yt_raw2
-            print(f"[send_song] ✅ yt-dlp: {raw.get('name')} ({raw.get('duration')}s)")
-        else:
-            print(f"[send_song] yt-dlp failed for: {query}")
-            title_words = " ".join(query.split()[:2])
-            await msg.edit(
-                f"⚠️ **'{query}'** — sahi artist ka song nahi mila.\n\n"
-                f"🔍 Try karo: `/download {title_words}`"
-            )
-            return
-
-    # If result is still a short clip (<90s), force yt-dlp
+    # Short clip check — if JioSaavn returned clip, yt-dlp handles it
     if int(raw.get("duration", 0)) > 0 and int(raw.get("duration", 0)) < 90:
         print(f"[send_song] Short clip ({raw.get('duration')}s) — forcing yt-dlp: {query}")
         yt_raw = await asyncio.to_thread(apis._ytdlp_download, query)
         if yt_raw and int(yt_raw.get("duration", 0)) >= 90:
             raw = yt_raw
+            local_path = raw.get("_local_path")
         else:
-            await msg.edit(f"❌ Full song nahi mila `{query}` ke liye. Try: `/download {' '.join(query.split()[:2])}`")
+            await msg.edit(f"❌ Full song nahi mila `{query}` ke liye.")
             return
-
-    # Preserve _local_path BEFORE normalize strips it (yt-dlp sets this)
-    local_path = raw.get("_local_path")
 
     raw = _normalize_song(raw)
     dl_url = raw.get("download_url")
@@ -1599,49 +1551,45 @@ async def discography(_, m: Message):
 # Words that mean a song is a cover/remake — filter from download results
 _COVER_SIGNALS_NAME = [
     "cover", "tribute", "recreat", "remake", "karaoke",
-    "instrumental", "sing along", "sing-along",
-    "slowed", "reverb", "backing track",
+    "instrumental", "sing along", "sing-along", "backing track",
     "mashup", "medley", "jukebox",
     "trending version", "viral version", "reels version",
     "short version", "clip version", "promo",
+    "sad version", "lofi version", "lo-fi version",
+    "different version", "slowed reverb", "slowed + reverb",
 ]
-
-# NOTE: "acoustic", "unplugged", "sad version", "lofi", "x " removed from hard filter
-# These are penalized in scoring but NOT hard-blocked (some are original versions)
-# "Jhol x Anurag Khalid" is the ORIGINAL song name — x should never hard-block
 
 _COVER_SIGNALS_ARTIST = [
-    "karaoke", "sing along",
-    "recreated by", "tribute band", "cover artist",
+    "karaoke", "sing along", "recreated by", "tribute band",
 ]
-# NOTE: Never add real artist names here (afusic, anukriti etc are real artists)
 
 def _is_valid_result(song):
-    """Filter: remove only clearly invalid results — short clips, blank artists, karaoke"""
+    """Filter options list — block covers, bad/unwanted versions"""
     import re as _re
     name = song.get("name", "").lower()
     artist = song.get("primaryArtists", song.get("artist", "")).lower().strip()
     duration = int(song.get("duration", 0))
 
-    # Only reject if we KNOW it's a very short clip (under 55s)
     if 0 < duration < 55:
         return False
-
-    # Remove unknown/blank artist
     if not artist or artist in ("unknown", "various artists", ""):
         return False
 
-    # Remove hard cover/karaoke signals
     for sig in _COVER_SIGNALS_NAME:
         if sig in name:
             return False
-
     for sig in _COVER_SIGNALS_ARTIST:
         if sig in artist:
             return False
 
-    # Remove bracket remix patterns
-    if _re.search(r'[\(\[](remix|mix|edit|dj|remaster|remastered)[\)\]]', name):
+    # Block "(Acoustic)" "(Sad)" "(Lofi)" "(Instrumental)" in brackets
+    if _re.search(r'\b(acoustic|sad|lofi|lo.fi|instrumental|slowed|reverb|unplugged)\b', name):
+        # Allow if it's a standalone artist name (e.g. "Acoustic" is not a version tag here)
+        # Only block if surrounded by brackets or preceded by dash
+        if _re.search(r'[\(\[\-]\s*(acoustic|sad|lofi|lo.fi|instrumental|slowed|reverb|unplugged)', name):
+            return False
+
+    if _re.search(r'[\(\[](remix|mix|dj edit|dj mix|remaster|remastered)[\)\]]', name):
         return False
 
     return True
