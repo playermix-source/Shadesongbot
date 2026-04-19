@@ -1561,6 +1561,8 @@ _COVER_SIGNALS_NAME = [
 
 _COVER_SIGNALS_ARTIST = [
     "karaoke", "sing along", "recreated by", "tribute band",
+    # Known fake/cover artists on JioSaavn who upload others' songs
+    "luckymuzzic", "lucky muzzic", "sirchox",
 ]
 
 def _is_valid_result(song):
