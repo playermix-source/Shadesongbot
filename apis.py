@@ -785,9 +785,12 @@ def search_song_download(query, quality="320"):
             else:
                 print(f"[search_song_download] ❌ Rejected '{s.get('name')}' by {s.get('artist')} — starts_ok={starts_ok} penalty={has_penalty} artist_ok={artist_ok}")
 
-    # 3. yt-dlp fallback
-    print(f"[yt-dlp] Trying: {query}")
-    yt_song = _ytdlp_download(query)
+    # 3. yt-dlp fallback — use original user query, not normalized song name
+    # Clean query: remove brackets/parentheses that confuse yt-dlp
+    import re as _re
+    clean_query = _re.sub(r'\s*[\(\[][^\)\]]*[\)\]]', '', query).strip()
+    print(f"[yt-dlp] Trying: {clean_query}")
+    yt_song = _ytdlp_download(clean_query)
     if yt_song and int(yt_song.get("duration", 0)) >= 90:
         print(f"[yt-dlp] ✅ {yt_song.get('name')} ({yt_song.get('duration')}s)")
         return yt_song
@@ -1015,25 +1018,19 @@ def _ytdlp_download(query):
             print(f"[yt-dlp] {search_prefix} error for '{search_q}': {type(e).__name__}: {e}")
             return None
 
-    # Try YouTube Music first (better for Indian songs)
-    result = _try_search("ytmsearch1", query)
+    # Try YouTube search (ytmsearch unsupported on some environments)
+    result = _try_search("ytsearch1", query)
     if result:
         return result
 
-    # Fallback: regular YouTube search
-    print(f"[yt-dlp] ytmsearch failed, trying ytsearch for: {query}")
-    result2 = _try_search("ytsearch1", query)
-    if result2 and int(result2.get("duration", 0)) >= 90:
-        return result2
-
-    # If 3+ word query, retry with first 2 words only on YouTube
+    # Retry with shorter query if 3+ words
     words = query.strip().split()
     if len(words) >= 3:
         short_q = " ".join(words[:2])
         print(f"[yt-dlp] Retrying with shorter: {short_q}")
-        result3 = _try_search("ytsearch1", short_q)
-        if result3 and int(result3.get("duration", 0)) >= 90:
-            return result3
+        result2 = _try_search("ytsearch1", short_q)
+        if result2 and int(result2.get("duration", 0)) >= 90:
+            return result2
 
     return None
 
@@ -1055,7 +1052,7 @@ def _ytdlp_search_multiple(query, limit=6):
             "extract_flat": True,
             "noplaylist": True,
         }
-        search_query = f"ytmsearch{limit}:{query}"
+        search_query = f"ytsearch{limit}:{query}"
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(search_query, download=False)
 
