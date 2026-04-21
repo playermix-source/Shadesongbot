@@ -1841,12 +1841,45 @@ async def pick_callback(_, cb):
 
     song = songs[idx]
     artist = song.get("primaryArtists", song.get("artist", "")).split(",")[0].strip()
-    song_query = f"{song['name']} {artist}"
+    song_query = f"{song['name']} {artist}".strip()
+    song_source = song.get("source", "")
+    song_id = song.get("id", "")
 
     await cb.answer(f"Downloading: {song['name']}", show_alert=False)
-
-    # Remove from pending
     _pending_downloads.pop(key, None)
+
+    # For YouTube source songs — download directly by ID
+    async def _download_song(msg_obj, uid, fname):
+        if song_source == "youtube" and song_id:
+            yt_url = f"https://www.youtube.com/watch?v={song_id}"
+            raw = await asyncio.to_thread(apis._ytdlp_download_url, yt_url)
+            if raw and raw.get("_local_path") and os.path.exists(raw["_local_path"]):
+                local = raw["_local_path"]
+                title = raw.get("name", song['name'])
+                art = raw.get("artist", artist)
+                dur = int(raw.get("duration", 0))
+                mins, secs = dur // 60, dur % 60
+                try:
+                    await app.send_audio(
+                        msg_obj.chat.id, local,
+                        caption=(f"🎵 **{title}**\n👤 {art}\n"
+                                f"⏱ {mins}:{secs:02d} | 🎧 192kbps\n"
+                                f"━━━━━━━━━━━━━━━\n🎧 Powered by BeatNova"),
+                        title=title, performer=art, duration=dur
+                    )
+                    await msg_obj.delete()
+                    if uid:
+                        db.ensure_user(uid, fname)
+                        db.increment_downloads(uid)
+                        db.add_history(uid, title)
+                except Exception as ex:
+                    await msg_obj.edit(f"❌ Error: `{str(ex)[:60]}`")
+                finally:
+                    try: os.remove(local)
+                    except: pass
+                return
+        # JioSaavn source — normal flow
+        await send_song(msg_obj, song_query, msg_obj, _user_id=uid, _first_name=fname)
 
     if is_group:
         try:
@@ -1859,7 +1892,7 @@ async def pick_callback(_, cb):
             try:
                 await cb.message.edit(random.choice(GROUP_ACK))
             except: pass
-            await send_song(dm_msg, song_query, dm_msg, _user_id=user_id, _first_name=first_name)
+            await _download_song(dm_msg, user_id, first_name)
         except Exception as e:
             err_str = str(e)
             if "USER_PRIVACY_RESTRICTED" in err_str:
@@ -1875,14 +1908,14 @@ async def pick_callback(_, cb):
                 # Fallback: try replying in group
                 try:
                     msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
-                    await send_song(cb.message, song_query, msg2, _user_id=user_id, _first_name=first_name)
+                    await _download_song(cb.message, user_id, first_name)
                 except Exception as e2:
                     if "SLOWMODE_WAIT" not in str(e2):
                         print(f"[pick_callback fallback] {e2}")
     else:
         try:
             msg2 = await cb.message.reply(f"🔍 **Searching:** `{song_query}`...")
-            await send_song(cb.message, song_query, msg2, _user_id=user_id, _first_name=first_name)
+            await _download_song(msg2, user_id, first_name)
         except Exception as e:
             print(f"[pick_callback private] {e}")
 
