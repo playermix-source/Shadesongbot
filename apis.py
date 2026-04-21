@@ -1064,21 +1064,44 @@ def _ytdlp_search_multiple(query, limit=6):
             if not e:
                 continue
             dur = int(e.get("duration") or 0)
-            if 0 < dur < 55:   # skip obvious clips
+            if 0 < dur < 55:
                 continue
+            raw_title = e.get("title", "Unknown")
+            # Clean YouTube title
+            import re as _re
+            clean = raw_title
+            clean = _re.sub(r'\s*[\(\[][^\)\]]{0,60}[\)\]]', '', clean)
+            clean = _re.sub(r'\s*@\S+', '', clean)
+            clean = _re.sub(r'\s*[Pp]rod(uced by|\.)\s+.*$', '', clean)
+            clean = _re.sub(r'\s*(ft\.|feat\.?)\s+.*$', '', clean, flags=_re.IGNORECASE)
+            clean = _re.sub(r'\s*\bwith\s+[@A-Z]\S*.*$', '', clean)
+            clean = _re.sub(r'\s*\|.*$', '', clean)
+            clean = _re.sub(r'\s+\d{4}$', '', clean)
+            parts = [p.strip() for p in clean.split(' - ') if p.strip()]
+            clean = parts[-1] if len(parts) >= 2 else (parts[0] if parts else raw_title)
+            if ':' in clean:
+                cp = [p.strip() for p in clean.split(':', 1)]
+                if len(cp[0].split()) <= 3:
+                    clean = cp[1]
+            title = clean.strip(' -|/') or raw_title
+
             artist = e.get("artist") or e.get("uploader", "Unknown")
+            # Clean uploader name
+            artist = _re.sub(r'\s*[-–]\s*(Topic|VEVO|Official|Music).*$', '', artist, flags=_re.IGNORECASE).strip()
+
             out.append({
                 "source": "youtube",
-                "name": e.get("title", "Unknown"),
+                "name": title,
                 "artist": artist,
                 "primaryArtists": artist,
-                "album": e.get("album", "Unknown"),
+                "album": e.get("album", title),
                 "year": str(e.get("release_year") or "Unknown"),
                 "duration": dur,
                 "language": "Unknown",
-                "download_url": "",  # fetched when user picks
+                "download_url": "",
                 "id": e.get("id", ""),
                 "quality": "192kbps",
+                "play_count": 0,
             })
         return out
 
