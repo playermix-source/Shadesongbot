@@ -264,7 +264,8 @@ def _saavn_old(query, limit=10):
                 "id": s.get("id", ""),
                 "quality": "320kbps",
             })
-        return out
+        return [s for s in out
+                if not any(b in s["artist"].lower() for b in BLOCKED_ARTISTS)]
     except Exception as e:
         print(f"[saavn_old] {e}")
         return []
@@ -583,15 +584,16 @@ def _score_all(results, query):
         artist = song.get("primaryArtists", song.get("artist", "")).lower()
         duration = int(song.get("duration", 0))
 
-        # Base: position score (JioSaavn popularity order)
-        score = (len(results) - idx) * 10
+        # Score starts at 0 — purely content based, no position bonus
+        # (JioSaavn position is unreliable — 2.0 often comes first)
+        score = 0
 
         # ── Hard penalties ────────────────────────────────────────────────
-        # 2.0/3.0 not in query → always at bottom regardless of position
+        # 2.0/3.0 not in query → always at absolute bottom
         if re.search(r'\b\d+\.\d+\b', name) and not re.search(r'\b\d+\.\d+\b', query_clean):
-            score = -500  # Absolute bottom — no position bonus can save it
+            score = -500  # Absolute bottom
 
-        # Short clip — heavy penalty but keep position context
+        # Short clip
         elif 0 < duration < 90:
             score -= 150
 
