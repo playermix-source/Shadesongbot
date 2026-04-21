@@ -329,7 +329,6 @@ def search_jiosaavn_quality(query, quality="320"):
 def search_jiosaavn_multiple(query, limit=8):
     """Legacy wrapper - uses apis.py"""
     results = apis.search_songs(query, limit)
-    # Convert to old format for backward compat
     out = []
     for s in results:
         out.append({
@@ -341,6 +340,7 @@ def search_jiosaavn_multiple(query, limit=8):
             "language": s.get("language","Unknown"),
             "downloadUrl": [{"link": s.get("download_url",""), "url": s.get("download_url","")}],
             "id": s.get("id",""),
+            "play_count": s.get("play_count", 0),  # preserve for scoring
         })
     return out[:limit]
 
@@ -1689,14 +1689,36 @@ async def download(_, m: Message):
         else:
             return  # Unknown error, give up
 
-    # Fetch multiple results
-    raw_results = await asyncio.to_thread(search_jiosaavn_multiple, query, 15)
+    # Fetch multiple results — already sorted by _score_all in apis.search_songs
+    raw_api_results = await asyncio.to_thread(apis.search_songs, query, 15)
+
+    # Convert to format expected by rest of handler
+    raw_results = []
+    for s in raw_api_results:
+        raw_results.append({
+            "name": s.get("name", s.get("name", "")),
+            "primaryArtists": s.get("artist", s.get("primaryArtists", "")),
+            "album": {"name": s.get("album", "Unknown")},
+            "year": s.get("year", "Unknown"),
+            "duration": s.get("duration", 0),
+            "language": s.get("language", "Unknown"),
+            "downloadUrl": [{"link": s.get("download_url",""), "url": s.get("download_url","")}],
+            "id": s.get("id", ""),
+            "play_count": s.get("play_count", 0),
+        })
 
     # Filter: remove short clips, unknown artists, obvious covers
     filtered = [s for s in raw_results if _is_valid_result(s)]
 
-    # Dedup by artist
-    filtered = _dedup_by_artist(filtered)
+    # Dedup by artist — keep first occurrence (highest scored) per artist
+    seen_artists = set()
+    deduped = []
+    for s in filtered:
+        artist = s.get("primaryArtists", "").split(",")[0].strip().lower()
+        if artist not in seen_artists:
+            seen_artists.add(artist)
+            deduped.append(s)
+    filtered = deduped
 
     # Max 6
     filtered = filtered[:6]
